@@ -25,7 +25,7 @@ replies; see `docs/screen.md`.
 
 ## Requests
 
-- `<verb> [args...]` (e.g. `move Z 12.500`, `zero X`, `mode thread`).
+- `<verb> [args...]` (e.g. `move z by 125000`, `zero X`, `mode thread`).
 - `settings set-all <json>`: applies every field present in one JSON object
   (bulk import, or a settings form saving several fields at once), through
   the same per-field validation as `settings set <field> <value>`, instead
@@ -39,6 +39,9 @@ replies; see `docs/screen.md`.
   instead of running while machine state is `flashing` or `estop`.
 - `jog step [<deci-microns>|next]`: shows or sets the jog step. `next`
   selects the next preset, then the custom step, then the first preset.
+- `move z|x to|by <deci-microns> [<du/min>]`: absolute or relative move.
+  The optional speed is in deci-microns per minute, capped at
+  `speedManualMove`; without it the move runs at `speedManualMove`.
 - `estop` / `estop ack`: `estop` alone replies `ok state=<name>`. `estop ack`
   is the one command let through while tripped -- it clears the EStop and
   reboots.
@@ -70,6 +73,12 @@ replies; see `docs/screen.md`.
 - `probe go z-|z+|x-|x+` starts a touch-off cycle on that axis/direction
   (selects probe mode and starts it in one call); a plain `start` is refused. `probe [status]` adds
   `contact=0|1`, the live probe input state, to the usual `name=value` line.
+
+## Calibration
+
+- `cal count | status | backlash z|x -|+ [runs] | stop`. See
+  `docs/calibration.md`. Over the WebSocket the reply is
+  `{"type":"cal","msg":"<reply>"}`.
 
 ## Thread table (HTTP)
 

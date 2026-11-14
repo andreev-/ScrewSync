@@ -68,7 +68,7 @@ namespace
         {"settings", "settings get | set <field> <value> | set-all <json> | reset", "machine config storage", settings},
         {"jog", "jog step [<deci-microns>|next] | z|x +|- [hold|release] | resolution <multiplier> | speed <steps/sec|0> | status",
          "jog buttons (tap = one step, repeated hold = continuous, release = stop), handwheel resolution/speed", jog},
-        {"move", "move z|x to|by <deci-microns> | stop | zero", "manual positioning; zero = rapid Z then X to 0", move},
+        {"move", "move z|x to|by <deci-microns> [<du/min>] | stop | zero", "manual positioning; zero = rapid Z then X to 0", move},
         {"mode", "mode [<name>|status]", "selects the operating mode (refused while running)", mode},
         {"start", "start [zero]", "starts the selected mode; zero = rapid Z then X to 0 first", start},
         {"stop", "stop", "stops the mode and decelerates both axes", stop},
@@ -95,6 +95,8 @@ namespace
          "half-ellipse mode (dir picks the Z side)", ellipse},
         {"probe", "probe go z-|z+|x-|x+ | [status] | probe-dst <du> | offset <du>",
          "touch-off mode: starts a cycle on an axis, and its params/status", probe},
+        {"cal", "cal count | status | backlash z|x -|+ [runs] | stop",
+         "calibration: raw spindle count, backlash measurement with the probe", cal},
         {"info", "info", "firmware version, target, reset cause, uptime, OTA image confirmed", info},
 #ifdef CONFIG_SCREWSYNC_DISPLAY_IMAGE
         {"display", "display status | info | flash",
@@ -164,6 +166,9 @@ namespace Command::Detail
         }
         if (tokLen == 4 && !strncmp(token, "move", 4)) {
             return strcmp(args, "stop") != 0;
+        }
+        if (tokLen == 3 && !strncmp(token, "cal", 3)) {
+            return !strncmp(args, "backlash", 8);
         }
         if (tokLen == 3 && !strncmp(token, "jog", 3)) {
             return (args[0] == 'z' || args[0] == 'x') && args[1] == ' ';
