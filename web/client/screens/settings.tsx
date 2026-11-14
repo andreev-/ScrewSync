@@ -2,16 +2,18 @@
 
 import { useEffect, useState } from "react"
 import { sendCommand } from "../api"
-import { useFooterBar } from "../footer-bar"
+import { SaveBar, useFooterBar } from "../footer-bar"
 import { CONFIGURE_LOCK_MESSAGE, useCanConfigure } from "../state-provider"
 import {
+  MACHINE_CONFIG_FIELDS,
   MACHINE_CONFIG_SECTIONS,
   parseMachineConfig,
   toDisplayValue,
   toRawValue,
   type MachineConfigField,
+  type MachineConfigPair,
 } from "../machine-config"
-import { Button, Field, LockNotice, Panel, TextInput, Toggle } from "../ui/primitives"
+import { InfoIcon, LockNotice, Panel, TextInput, Toggle } from "../ui/primitives"
 import { useToast } from "../ui/toast"
 
 export function SettingsScreen() {
@@ -44,16 +46,21 @@ export function SettingsScreen() {
 
   useFooterBar(
     raw && (
-      <div className="mx-auto flex max-w-5xl gap-2 px-4 py-3">
-        <Button variant="primary" disabled={busy || loading || !canConfigure || Object.keys(dirty).length === 0} onClick={save}>
-          Save
-        </Button>
-        <Button variant="danger" disabled={busy || loading || !canConfigure} onClick={reset}>
-          Reset to defaults
-        </Button>
-      </div>
+      <SaveBar
+        dirty={MACHINE_CONFIG_FIELDS.some((f) => f.key in dirty && valueOf(f) !== toDisplayValue(f, raw[f.key]))}
+        saveDisabled={busy || loading || !canConfigure}
+        discardDisabled={busy || loading}
+        resetDisabled={busy || loading || !canConfigure}
+        onSave={save}
+        onDiscard={() => setDirty({})}
+        onReset={reset}
+      />
     ),
   )
+
+  function valueOf(field: MachineConfigField) {
+    return toDisplayValue(field, dirty[field.key] ?? raw?.[field.key])
+  }
 
   function setField(field: MachineConfigField, display: number | boolean) {
     setDirty((d) => ({ ...d, [field.key]: toRawValue(field, display) }))
@@ -94,6 +101,9 @@ toast.push("Applied and saved to flash.", "good")
   }
 
   async function reset() {
+    if (!window.confirm("Replace all settings with the defaults?")) {
+      return
+    }
     setBusy(true)
     try {
       const r = await sendCommand("settings reset")
@@ -117,37 +127,151 @@ toast.push("Applied and saved to flash.", "good")
           <p className="text-sm text-muted-foreground">{loading ? "Loading..." : "Not loaded."}</p>
         </Panel>
       ) : (
-        MACHINE_CONFIG_SECTIONS.map((section) => (
+        <fieldset disabled={!canConfigure} className="contents">
+          {MACHINE_CONFIG_SECTIONS.map((section) => (
           <Panel key={section.title} title={section.title}>
-            <div className="grid gap-3 md:grid-cols-3">
-              {section.fields.map((field) => {
-                const value = toDisplayValue(field, dirty[field.key] ?? raw[field.key])
-                if (field.type === "checkbox") {
-                  return (
-                    <Field key={field.key} label={field.label} tooltip={field.help}>
-                      <span className="flex h-[34px] items-center">
-                        <Toggle checked={value as boolean} onChange={(v) => setField(field, v)} label={field.label} />
-                      </span>
-                    </Field>
-                  )
-                }
-                return (
-                  <Field key={field.key} label={field.unit ? `${field.label} (${field.unit})` : field.label} tooltip={field.help}>
-                    <TextInput
-                      type="number"
-                      min={field.min}
-                      max={field.max}
-                      step={field.step}
-                      value={value as number}
-                      onChange={(e) => setField(field, Number(e.target.value))}
-                    />
-                  </Field>
-                )
-              })}
+            <div className="flex flex-col gap-4">
+              {section.fields.length > 0 && (
+                <div className={GRID}>
+                  {section.fieldsTitle && <div className={`col-span-2 md:col-span-4 ${SUBTITLE}`}>{section.fieldsTitle}</div>}
+                  {section.fields.map((field) => (
+                    <SettingCell key={field.key} field={field} value={valueOf(field)} onChange={(v) => setField(field, v)} />
+                  ))}
+                </div>
+              )}
+              {section.fields.length > 0 && section.pairs && <hr className="my-2 border-border" />}
+              {section.common && (
+                <div className={GRID}>
+                  {section.commonTitle && <div className={`col-span-2 md:col-span-4 ${SUBTITLE}`}>{section.commonTitle}</div>}
+                  {section.common.map((field) => (
+                    <SettingCell key={field.key} field={field} value={valueOf(field)} onChange={(v) => setField(field, v)} />
+                  ))}
+                </div>
+              )}
+              {section.pairs && <AxisGrid pairs={section.pairs} title={section.pairsTitle} valueOf={valueOf} onChange={setField} />}
             </div>
           </Panel>
-        ))
+          ))}
+        </fieldset>
       )}
+    </div>
+  )
+}
+
+type Value = number | boolean
+
+function fieldLabel(field: MachineConfigField) {
+  return field.unit ? `${field.label} (${field.unit})` : field.label
+}
+
+function FieldInput({ field, value, onChange }: { field: MachineConfigField; value: Value; onChange: (v: Value) => void }) {
+  if (field.type === "checkbox") {
+    return (
+      <span className="flex h-[34px] items-center">
+        <Toggle checked={value as boolean} onChange={onChange} label={field.label} />
+      </span>
+    )
+  }
+  return (
+    <TextInput
+      type="number"
+      className="w-full min-w-0"
+      min={field.min}
+      max={field.max}
+      step={field.step}
+      value={value as number}
+      onChange={(e) => onChange(Number(e.target.value))}
+    />
+  )
+}
+
+const GRID = "grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4"
+const SUBTITLE = "text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+
+function AxisGrid({
+  pairs,
+  title,
+  valueOf,
+  onChange,
+}: {
+  pairs: MachineConfigPair[]
+  title?: string
+  valueOf: (field: MachineConfigField) => Value
+  onChange: (field: MachineConfigField, v: Value) => void
+}) {
+  const rows: MachineConfigPair[][] = []
+  for (let i = 0; i < pairs.length; i += 2) {
+    rows.push(pairs.slice(i, i + 2))
+  }
+  const cell = (p: MachineConfigPair | undefined, axis: "Z" | "X", key: string) => {
+    if (!p) {
+      return <div key={key} />
+    }
+    const [field, other] = axis === "Z" ? [p.z, p.x] : [p.x, p.z]
+    const value = valueOf(field)
+    const otherValue = valueOf(other)
+    return (
+      <SettingCell
+        key={field.key}
+        field={field}
+        axis={axis}
+        value={value}
+        onChange={(v) => onChange(field, v)}
+        copy={
+          p.copy && value !== otherValue
+            ? { label: `Copy to ${axis === "Z" ? "X" : "Z"}`, onClick: () => onChange(other, value) }
+            : undefined
+        }
+      />
+    )
+  }
+  return (
+    <div className="relative">
+      <div className="absolute inset-y-0 left-1/2 hidden border-l border-border md:block" />
+      <div className={GRID}>
+        <div className={`col-span-2 hidden md:block ${SUBTITLE}`}>{title ? `Z axis ${title}` : "Z axis"}</div>
+        <div className={`col-span-2 hidden md:block ${SUBTITLE}`}>{title ? `X axis ${title}` : "X axis"}</div>
+        {rows.flatMap((r, i) => [
+          cell(r[0], "Z", `z0-${i}`),
+          cell(r[1], "Z", `z1-${i}`),
+          cell(r[0], "X", `x0-${i}`),
+          cell(r[1], "X", `x1-${i}`),
+        ])}
+      </div>
+    </div>
+  )
+}
+
+function SettingCell({
+  field,
+  axis,
+  value,
+  onChange,
+  copy,
+}: {
+  field: MachineConfigField
+  axis?: string
+  value: Value
+  onChange: (v: Value) => void
+  copy?: { label: string; onClick: () => void }
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1 text-sm">
+      <div className="flex items-center gap-1 text-muted-foreground">
+        {axis && <span className="font-semibold text-foreground md:hidden">{axis}</span>}
+        <span className="truncate">{fieldLabel(field)}</span>
+        <InfoIcon tooltip={field.help} />
+        {copy && (
+          <button
+            type="button"
+            className="ml-auto shrink-0 cursor-pointer rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-px text-xs font-medium text-sky-700 hover:bg-sky-500/20 dark:text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={copy.onClick}
+          >
+            {copy.label}
+          </button>
+        )}
+      </div>
+      <FieldInput field={field} value={value} onChange={onChange} />
     </div>
   )
 }

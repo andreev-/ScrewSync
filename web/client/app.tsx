@@ -9,15 +9,17 @@ import { AppearanceScreen } from "./screens/appearance"
 import { DeviceScreen } from "./screens/device"
 import { GcodeScreen } from "./screens/gcode"
 import { NetworkScreen } from "./screens/network"
+import { PinsScreen } from "./screens/pins"
 import { SettingsScreen } from "./screens/settings"
 import { ThreadsScreen } from "./screens/threads"
 import { Badge } from "./ui/primitives"
 import { ToastProvider } from "./ui/toast"
 
 const NAV = [
-  { path: "/settings", label: "Settings" },
-  { path: "/threads", label: "Threads" },
   { path: "/gcode", label: "Gcode" },
+  { path: "/threads", label: "Threads" },
+  { path: "/settings", label: "Settings" },
+  { path: "/pins", label: "Pins" },
   { path: "/network", label: "Network" },
   { path: "/device", label: "Device" },
   { path: "/appearance", label: "Appearance" },
@@ -27,11 +29,14 @@ function screenFor(path: string) {
   if (path.startsWith("/threads")) {
 return <ThreadsScreen />
 }
-  if (path.startsWith("/gcode")) {
-return <GcodeScreen />
+  if (path.startsWith("/settings")) {
+return <SettingsScreen />
 }
   if (path.startsWith("/network")) {
 return <NetworkScreen />
+}
+  if (path.startsWith("/pins")) {
+return <PinsScreen />
 }
   if (path.startsWith("/device")) {
 return <DeviceScreen />
@@ -39,7 +44,7 @@ return <DeviceScreen />
   if (path.startsWith("/appearance")) {
 return <AppearanceScreen />
 }
-  return <SettingsScreen />
+  return <GcodeScreen />
 }
 
 function availableWhenOffline(path: string) {
@@ -76,7 +81,7 @@ function AppShell() {
           <nav className="flex flex-wrap gap-1">
             {NAV.map((n) => {
               const active =
-                n.path === "/settings"
+                n.path === "/gcode"
                   ? path === "/" || path === n.path || path.startsWith(n.path + "/")
                   : path === n.path || path.startsWith(n.path + "/")
               return (
@@ -102,7 +107,7 @@ function AppShell() {
         {/* flex-1 + overflow-y-auto here (full width) so the scrollbar sits at
             the window edge, not on the centered <main> below -- max-w-5xl
             there would otherwise inset it. */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]">
           <main className="mx-auto max-w-5xl px-4 py-6">
             {connected || availableWhenOffline(path) ? (
               screenFor(path)
