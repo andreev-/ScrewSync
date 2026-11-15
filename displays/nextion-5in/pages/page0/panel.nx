@@ -187,9 +187,9 @@ on startStop.up:
 on zeroYes.up:
   setZeroAsk(0)
   if (zeroFor.val == ZERO_FOR_Z) {
-    send("move z to 0")
+    send("o<zero> call [1] [0]")
   } else if (zeroFor.val == ZERO_FOR_X) {
-    send("move x to 0")
+    send("o<zero> call [0] [1]")
   } else {
     send("start zero")
   }
@@ -197,9 +197,9 @@ on zeroYes.up:
 on zeroNo.up:
   setZeroAsk(0)
   if (zeroFor.val == ZERO_FOR_Z) {
-    send("zero z")
+    send("@G10 L20 P1 Z0")
   } else if (zeroFor.val == ZERO_FOR_X) {
-    send("zero x")
+    send("@G10 L20 P1 X0")
   } else {
     send("start")
   }
@@ -224,22 +224,22 @@ on gcodeStop.up:
 
 on probeUp.up:
   if (xOn.val) {
-    send("probe go x-")
+    send("o<probe> call [1] [-1]")
   }
 
 on probeDown.up:
   if (xOn.val) {
-    send("probe go x+")
+    send("o<probe> call [1] [1]")
   }
 
 on probeLeft.up:
   if (zOn.val) {
-    send("probe go z-")
+    send("o<probe> call [0] [-1]")
   }
 
 on probeRight.up:
   if (zOn.val) {
-    send("probe go z+")
+    send("o<probe> call [0] [1]")
   }
 
 on ovrMinus.up:

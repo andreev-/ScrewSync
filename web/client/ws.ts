@@ -1,3 +1,4 @@
+import { parseProbe, type ProbeResult } from "./probe"
 import type { CmdOutcome, ScanResult, StatusPush, WifiPush } from "./types"
 
 interface StatusMsg extends StatusPush {
@@ -34,6 +35,9 @@ type Listener = {
   onStatus?: (s: StatusPush) => void
   onScan?: (s: ScanResult) => void
   onWifi?: (s: WifiPush) => void
+  onProbe?: (r: ProbeResult) => void
+  // A G-code (PRINT, ...) line.
+  onPrint?: (text: string) => void
   onConnected?: (connected: boolean, error: string | null) => void
 }
 
@@ -143,6 +147,18 @@ l.onScan?.(scan as ScanResult)
       const { type, ...wifi } = msg
       for (const l of listeners) {
 l.onWifi?.(wifi as WifiPush)
+}
+    } else if (msg.type === "probe") {
+      const result = parseProbe(String((msg as OtherMsg).msg ?? ""))
+      if (result) {
+        for (const l of listeners) {
+l.onProbe?.(result)
+}
+      }
+    } else if (msg.type === "print") {
+      const text = String((msg as OtherMsg).msg ?? "")
+      for (const l of listeners) {
+l.onPrint?.(text)
 }
     }
   }

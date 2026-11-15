@@ -1,0 +1,232 @@
+/*
+ * This file is part of the ScrewSync project.
+ * Copyright (c) 2026 Donatas Olsevičius
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+#include <zephyr/ztest.h>
+#include <initializer_list>
+#include <string.h>
+#include "GcodeDialects.hpp"
+#include "GcodeMdi.hpp"
+
+using namespace Gcode;
+
+namespace
+{
+    struct Collect : StepSink
+    {
+        Step steps[8];
+        size_t count = 0;
+        void emit(const Step &step) override
+        {
+            if (count < 8) {
+                steps[count++] = step;
+            }
+        }
+    };
+
+    Params g_params;
+
+    Mdi session()
+    {
+        g_params.clear();
+        Mdi mdi;
+        mdi.begin(*find("linuxcnc"), 0, 0, g_params, nullptr);
+        return mdi;
+    }
+
+    const char *interpretLine(Interpreter &interp, const char *text, StepSink &sink)
+    {
+        static Line line;
+        Context ctx{&g_params, nullptr, DU_PER_MM};
+        const char *err = parseLine(text, ctx, line);
+        return err ? err : interp.line(line.words, 1, sink);
+    }
+}
+
+ZTEST_SUITE(gcode_mdi, nullptr, nullptr, nullptr, nullptr, nullptr);
+
+ZTEST(gcode_mdi, test_detection)
+{
+    for (const char *line : {"G0 Z1", "g91", "M100 Z1", "T1", "F100", "X-1", "Z.5", "z+1"}) {
+        zassert_true(isMdiLine(line), "%s", line);
+    }
+    for (const char *line : {"", "G", "move z to 0", "zero z", "mode turn", "gear", "x", "ping", "@G0 Z1", " G0"}) {
+        zassert_false(isMdiLine(line), "%s", line);
+    }
+}
+
+ZTEST(gcode_mdi, test_modal_state_kept)
+{
+    Mdi mdi = session();
+    Collect sink;
+    zassert_is_null(mdi.line("G91 G1 F100", false, 4, sink));
+    zassert_is_null(mdi.line("Z1", false, 4, sink));
+    zassert_is_null(mdi.line("Z1", false, 4, sink));
+    zassert_equal(sink.count, 2);
+    zassert_equal(sink.steps[1].kind, StepKind::Feed);
+    zassert_equal(sink.steps[1].zDu, 2 * DU_PER_MM);
+    zassert_equal(sink.steps[1].feed, 100 * DU_PER_MM);
+}
+
+ZTEST(gcode_mdi, test_ui_line_keeps_modals)
+{
+    Mdi mdi = session();
+    Collect sink;
+    zassert_is_null(mdi.line("G91 G1 F100", false, 4, sink));
+    zassert_is_null(mdi.line("G90 G0 Z5", true, 4, sink));
+    zassert_is_null(mdi.line("Z1", false, 4, sink));
+    zassert_equal(sink.count, 2);
+    zassert_equal(sink.steps[0].kind, StepKind::Rapid);
+    zassert_equal(sink.steps[1].kind, StepKind::Feed);
+    zassert_equal(sink.steps[1].zDu, 6 * DU_PER_MM);
+}
+
+ZTEST(gcode_mdi, test_ui_line_starts_fresh)
+{
+    Mdi mdi = session();
+    Collect sink;
+    zassert_is_null(mdi.line("G1 F100", false, 4, sink));
+    zassert_not_null(mdi.line("Z1", true, 4, sink));
+}
+
+ZTEST(gcode_mdi, test_set_position)
+{
+    Mdi mdi = session();
+    Collect sink;
+    mdi.setPosition(3 * DU_PER_MM, DU_PER_MM);
+    zassert_is_null(mdi.line("G91 G0 Z1", false, 4, sink));
+    zassert_equal(sink.steps[0].zDu, 4 * DU_PER_MM);
+    zassert_equal(sink.steps[0].xDu, DU_PER_MM);
+}
+
+ZTEST(gcode_mdi, test_rejected_line_changes_nothing)
+{
+    Mdi mdi = session();
+    Collect sink;
+    zassert_is_null(mdi.line("G0 Z1", false, 4, sink));
+    zassert_not_null(mdi.line("G91 G1 Z1", false, 4, sink));
+    zassert_not_null(mdi.line("G91 Z1", false, 0, sink));
+    zassert_is_null(mdi.line("Z2", false, 4, sink));
+    zassert_equal(sink.count, 2);
+    zassert_equal(sink.steps[1].kind, StepKind::Rapid);
+    zassert_equal(sink.steps[1].zDu, 2 * DU_PER_MM);
+}
+
+ZTEST(gcode_mdi, test_program_codes_do_nothing)
+{
+    Mdi mdi = session();
+    Collect sink;
+    zassert_is_null(mdi.line("M0", false, 0, sink));
+    zassert_is_null(mdi.line("M2", false, 0, sink));
+    zassert_equal(sink.count, 0);
+}
+
+ZTEST(gcode_mdi, test_motors)
+{
+    Mdi mdi = session();
+    Collect sink;
+    zassert_is_null(mdi.line("M100 Z1 X0", false, 4, sink));
+    zassert_is_null(mdi.line("M100 X1", true, 4, sink));
+    zassert_equal(sink.count, 2);
+    zassert_equal(sink.steps[0].kind, StepKind::Motors);
+    zassert_equal(sink.steps[0].axes, AXIS_Z | AXIS_X);
+    zassert_equal(sink.steps[0].zDu, 1);
+    zassert_equal(sink.steps[0].xDu, 0);
+    zassert_equal(sink.steps[1].axes, AXIS_X);
+    zassert_equal(sink.steps[1].xDu, 1);
+    zassert_not_null(mdi.line("M100", false, 4, sink));
+    zassert_not_null(mdi.line("M100 Z2", false, 4, sink));
+    zassert_not_null(mdi.line("G0 M100 Z1", false, 4, sink));
+    zassert_is_null(mdi.line("G33 Z-1 K1", false, 4, sink));
+    zassert_not_null(mdi.line("M100 Z1 K1", false, 4, sink));
+}
+
+ZTEST(gcode_mdi, test_spindle_angle)
+{
+    Mdi mdi = session();
+    Collect sink;
+    zassert_is_null(mdi.line("M110 R90.5", false, 4, sink));
+    zassert_is_null(mdi.line("M110", false, 4, sink));
+    zassert_equal(sink.count, 2);
+    zassert_equal(sink.steps[0].kind, StepKind::SpindleAngle);
+    zassert_equal(sink.steps[0].feed, 90500);
+    zassert_equal(sink.steps[1].feed, 0);
+    zassert_not_null(mdi.line("G0 Z1 R5", false, 4, sink));
+    zassert_not_null(mdi.line("G0 Z1 M110", false, 4, sink));
+    zassert_is_null(mdi.line("M100 Z1 M110", false, 4, sink));
+}
+
+ZTEST(gcode_mdi, test_set_position_moves_session)
+{
+    Mdi mdi = session();
+    Collect sink;
+    mdi.setPosition(5 * DU_PER_MM, 0);
+    zassert_is_null(mdi.line("G10 L20 P1 Z0", false, 4, sink));
+    zassert_is_null(mdi.line("G91 G0 Z1", false, 4, sink));
+    zassert_equal(sink.count, 2);
+    zassert_equal(sink.steps[0].kind, StepKind::SetPosition);
+    zassert_equal(sink.steps[0].axes, AXIS_Z);
+    zassert_equal(sink.steps[1].zDu, DU_PER_MM);
+}
+
+ZTEST(gcode_mdi, test_program_rejects_mdi_codes)
+{
+    Interpreter interp;
+    find("linuxcnc")->begin(interp, 0, 0);
+    Collect sink;
+    zassert_not_null(interpretLine(interp, "M100 Z1", sink));
+    zassert_not_null(interpretLine(interp, "M110", sink));
+}
+
+ZTEST(gcode_mdi, test_probe)
+{
+    Mdi mdi = session();
+    Collect sink;
+    zassert_is_null(mdi.line("G91 G38.2 Z-5 F100", false, 4, sink));
+    zassert_is_null(mdi.line("G38.5 X1", false, 4, sink));
+    zassert_equal(sink.count, 2);
+    zassert_equal(sink.steps[0].kind, StepKind::Probe);
+    zassert_equal(sink.steps[0].zDu, -5 * DU_PER_MM);
+    zassert_equal(sink.steps[0].feed, 100 * DU_PER_MM);
+    zassert_equal(sink.steps[0].probe, 0);
+    zassert_equal(sink.steps[1].probe, PROBE_AWAY | PROBE_NO_ERROR);
+    zassert_equal(sink.steps[1].xDu, DU_PER_MM);
+    // Not modal.
+    zassert_not_null(mdi.line("Z-1", false, 4, sink));
+    zassert_not_null(mdi.line("G38.2 Z-1 X1", false, 4, sink));
+    zassert_not_null(mdi.line("G38.2", false, 4, sink));
+    zassert_not_null(mdi.line("G38.2 Z0", false, 4, sink));
+    zassert_not_null(mdi.line("G0 G38.2 Z-1", false, 4, sink));
+    zassert_not_null(mdi.line("G38.1 Z-1", false, 4, sink));
+    zassert_not_null(mdi.line("G38.2 Z-1", true, 4, sink));
+}
+
+ZTEST(gcode_mdi, test_parameters)
+{
+    Mdi mdi = session();
+    Collect sink;
+    zassert_is_null(mdi.line("#<_d> = 2", false, 4, sink));
+    zassert_is_null(mdi.line("G0 Z[#<_d> * 2]", false, 4, sink));
+    zassert_equal(sink.count, 1);
+    zassert_equal(sink.steps[0].zDu, 4 * DU_PER_MM);
+    zassert_not_null(mdi.line("o<x> call", false, 4, sink));
+    mdi.probeDone(-3 * DU_PER_MM, DU_PER_MM, true, -2 * DU_PER_MM);
+    zassert_is_null(mdi.line("G0 Z#5063 X#5061", false, 4, sink));
+    zassert_equal(sink.steps[1].zDu, -3 * DU_PER_MM);
+    zassert_equal(sink.steps[1].xDu, DU_PER_MM);
+    zassert_is_null(mdi.line("G0 Z#<_probe_motor>", false, 4, sink));
+    zassert_equal(sink.steps[2].zDu, -2 * DU_PER_MM);
+}

@@ -21,7 +21,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Flavor-neutral G-code pieces: tokenizer, interpreted Step, Flavor
+// Dialect-neutral G-code pieces: words, interpreted Step, Dialect
 // interface. No Zephyr dependency; no heap allocation.
 namespace Gcode
 {
@@ -43,11 +43,6 @@ namespace Gcode
         size_t count;
     };
 
-    // Splits one source line into words. Strips ';' and '(...)' comments,
-    // drops N<num> words and lines that are just "%". nullptr on success,
-    // else a static error string.
-    const char *tokenize(const char *text, Words &out);
-
     enum class StepKind : uint8_t
     {
         Rapid,
@@ -55,11 +50,21 @@ namespace Gcode
         Thread,
         Pause,
         OptionalPause,
-        End
+        End,
+        SetPosition,  // G10 L20: the axes in mask read zDu/xDu
+        Motors,       // M100: the axes in mask on (1) or off (0) in zDu/xDu
+        SpindleAngle, // M110: the current angle becomes feed millidegrees
+        Probe,        // G38.x: one axis toward zDu/xDu at feed, see the probe flags
     };
 
-    // One interpreted motion/control action. zDu/xDu are absolute targets,
-    // meaningful for the motion kinds only.
+    constexpr uint8_t PROBE_AWAY = 1;     // G38.4/.5: stops when the contact opens
+    constexpr uint8_t PROBE_NO_ERROR = 2; // G38.3/.5: no error if the input does not change
+
+    constexpr uint8_t AXIS_Z = 1;
+    constexpr uint8_t AXIS_X = 2;
+
+    // One interpreted motion/control action. For the motion kinds zDu/xDu
+    // are absolute targets.
     struct Step
     {
         StepKind kind;
@@ -67,6 +72,8 @@ namespace Gcode
         int32_t xDu;
         int32_t feed; // du/min for Feed, lead du per spindle rev for Thread
         uint32_t line;
+        uint8_t axes;
+        uint8_t probe;
     };
 
     struct StepSink
@@ -76,16 +83,19 @@ namespace Gcode
         {}
     };
 
-    struct Flavor
+    class Interpreter;
+
+    // Turns one dialect's lines into the standard (LinuxCNC) words the
+    // Interpreter runs.
+    struct Dialect
     {
-        virtual void begin(int32_t startZDu, int32_t startXDu) = 0;
-        virtual const char *line(const Words &words, uint32_t lineNo, StepSink &sink) = 0;
         virtual const char *id() const = 0;
-        virtual ~Flavor()
+        // Resets interp and the dialect's own state for a new program.
+        virtual void begin(Interpreter &interp, int32_t startZDu, int32_t startXDu) = 0;
+        virtual const char *translate(Words &words) = 0;
+        virtual ~Dialect()
         {}
     };
-
-    const char *interpretLine(Flavor &flavor, const char *text, uint32_t lineNo, StepSink &sink);
 }
 
 #endif

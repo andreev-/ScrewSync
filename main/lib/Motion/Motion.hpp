@@ -27,21 +27,13 @@ namespace Motion
     double stepsToDu(Stepper::Axis axis, int64_t steps);
     int32_t spindleCountsPerRev();
 
-    // No mode running and the machine is Idle.
+    // No mode or MDI running and the machine is Idle.
     bool idle();
 
-    // Each returns nullptr on success, else the reason. duPerMin 0 = speedManualMove.
-    const char *moveTo(Stepper::Axis axis, int64_t du, int64_t &targetSteps, int32_t duPerMin = 0);
-    const char *moveBy(Stepper::Axis axis, int64_t du, int64_t &targetSteps, int32_t duPerMin = 0);
-    // Rapid Z to 0, then X to 0.
-    const char *moveToZero();
-    const char *zero(Stepper::Axis axis, int64_t du);
-
-    void stop(Stepper::Axis axis);
     void setAxisEnabled(Stepper::Axis axis, bool enabled);
 
-    // The current spindle angle becomes 0 deg; returns the count it was taken at.
-    int64_t zeroSpindle();
+    // The current spindle angle becomes deg.
+    void setSpindleAngle(double deg);
     float spindleAngleDeg();
 }
 

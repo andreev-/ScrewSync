@@ -71,9 +71,6 @@ namespace Command::Detail
     void ws(const char *args, char *out, size_t outMax);
 
     void jog(const char *args, char *out, size_t outMax);
-    void move(const char *args, char *out, size_t outMax);
-    void zero(const char *args, char *out, size_t outMax);
-    void enable(const char *args, char *out, size_t outMax);
 
     void mode(const char *args, char *out, size_t outMax);
     void start(const char *args, char *out, size_t outMax);
@@ -89,7 +86,6 @@ namespace Command::Detail
     void thread(const char *args, char *out, size_t outMax);
     void cal(const char *args, char *out, size_t outMax);
     void threads(const char *args, char *out, size_t outMax);
-    void probe(const char *args, char *out, size_t outMax);
 }
 
 #endif

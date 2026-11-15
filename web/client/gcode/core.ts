@@ -1,5 +1,7 @@
-// Flavor-neutral G-code pieces, mirroring main/lib/Gcode/GcodeCore.{hpp,cpp}:
-// tokenizer, interpreted Step, Flavor interface.
+// Dialect-neutral G-code pieces, mirroring main/lib/Gcode/GcodeCore.{hpp,cpp}:
+// tokenizer, interpreted Step, Dialect interface.
+
+import type { Interpreter } from "./interpreter"
 
 export const DU_PER_MM = 10000
 export const DU_PER_INCH = 254000
@@ -12,26 +14,34 @@ export interface Word {
   value: number
 }
 
-export type StepKind = "rapid" | "feed" | "thread" | "pause" | "optional-pause" | "end"
+// set-position: G10 L20, the axes in mask read zDu/xDu.
+export type StepKind = "rapid" | "feed" | "thread" | "pause" | "optional-pause" | "end" | "set-position"
 
-// One interpreted motion/control action. zDu/xDu are absolute targets,
-// meaningful for the motion kinds only.
+export const AXIS_Z = 1
+export const AXIS_X = 2
+
+// One interpreted motion/control action. For the motion kinds zDu/xDu are
+// absolute targets.
 export interface Step {
   kind: StepKind
   zDu: number
   xDu: number
   feed: number // du/min for Feed, lead du per spindle rev for Thread
   line: number
+  axes?: number
 }
 
 export interface StepSink {
   emit(step: Step): void
 }
 
-export interface Flavor {
-  begin(startZDu: number, startXDu: number): void
-  line(words: Word[], lineNo: number, sink: StepSink): string | null
+// Turns one dialect's lines into the standard (LinuxCNC) words the
+// Interpreter runs.
+export interface Dialect {
   id(): string
+  // Resets interp and the dialect's own state for a new program.
+  begin(interp: Interpreter, startZDu: number, startXDu: number): void
+  translate(words: Word[]): string | null
 }
 
 function isSpace(c: string): boolean {
@@ -163,7 +173,13 @@ continue
   return { error: null, words }
 }
 
-export function interpretLine(flavor: Flavor, text: string, lineNo: number, sink: StepSink): string | null {
+export function interpretLine(
+  dialect: Dialect,
+  interp: Interpreter,
+  text: string,
+  lineNo: number,
+  sink: StepSink,
+): string | null {
   const { error, words } = tokenize(text)
   if (error) {
 return error
@@ -171,5 +187,9 @@ return error
   if (words.length === 0) {
 return null
 }
-  return flavor.line(words, lineNo, sink)
+  const err = dialect.translate(words)
+  if (err) {
+    return err
+  }
+  return interp.line(words, lineNo, sink)
 }

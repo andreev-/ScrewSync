@@ -37,7 +37,7 @@ namespace Mode
         Slot,
         Ellipse,
         Gcode,
-        Probe,
+        Probe, // a display panel, no job
     };
     constexpr size_t COUNT = 9;
 
@@ -57,6 +57,7 @@ namespace Mode
         int32_t passes;
         bool waiting; // paused until the next start
         uint32_t step; // Gcode: motion steps executed so far
+                       // phase: Gcode: the last (MSG, ...) while it runs
     };
 
     // Loads parameters and starts the runner. After RunSettings::load().
@@ -67,7 +68,13 @@ namespace Mode
 
     Id current();
     bool running();
+    // A mode runs or MDI moves.
+    bool busy();
     bool owns(Stepper::Axis axis);
+
+    // One G-code line into the MDI queue; nullptr if accepted. ui: a UI
+    // line, run without changing the MDI modal state.
+    const char *mdi(const char *line, bool ui);
 
     // Each returns nullptr on success, else the reason it was refused.
     const char *select(Id id);
@@ -109,13 +116,11 @@ namespace Mode
 
     const char *threadPreset(const char *group, const char *designation);
 
-    // Selects probe mode and starts its cycle on the given axis/direction
-    // in one call (the display's/protocol's "probe go z-|z+|x-|x+").
-    const char *probeGo(Stepper::Axis axis, bool reverse);
-    // Probe mode's backlash release measurement (docs/calibration.md),
-    // median of runs. Result in lastBacklashDu(), -1 until one finishes.
-    const char *probeBacklash(Stepper::Axis axis, bool reverse, int runs);
-    int32_t lastBacklashDu();
+    // "o<name> call [args]": runs that routine as a G-code job, whatever
+    // the selected mode. G0/G1 do not wait for the spindle.
+    const char *call(const char *line);
+    // A G-code job (program or call) runs.
+    bool gcodeRunning();
     // The probe input's contact ISR; see ProbeInput::begin().
     void probeEdge(bool contactNow);
 

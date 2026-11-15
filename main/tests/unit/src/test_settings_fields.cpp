@@ -175,3 +175,77 @@ ZTEST(settings_fields, test_format_all_into_a_short_buffer)
     formatAll(g_conf, out, sizeof(out));
     zassert_true(strlen(out) < sizeof(out));
 }
+
+ZTEST(settings_fields, test_old_name_finds_the_renamed_field)
+{
+    const Field *f = findField("speedManualMoveX");
+    zassert_not_null(f);
+    zassert_str_equal(f->name, "speedRapidX");
+    zassert_str_equal(oldName(*f), "speedManualMoveX");
+    zassert_is_null(oldName(*findField("encoderPpr")));
+}
+
+namespace
+{
+    int64_t parse(const char *json)
+    {
+        static char buf[256];
+        strcpy(buf, json);
+        return parseJson(buf, strlen(buf), g_conf);
+    }
+
+    size_t indexOf(const char *name)
+    {
+        return (size_t)(findField(name) - FIELDS);
+    }
+}
+
+ZTEST(settings_fields, test_json_old_name)
+{
+    int64_t mask = parse("{\"speedManualMoveX\":1234}");
+    zassert_equal(g_conf.x.speedRapid, 1234);
+    zassert_equal(mask, (int64_t)BIT64(indexOf("speedRapidX")));
+}
+
+ZTEST(settings_fields, test_json_new_name_wins)
+{
+    parse("{\"speedRapidZ\":111,\"speedManualMoveZ\":222}");
+    zassert_equal(g_conf.z.speedRapid, 111);
+    parse("{\"speedManualMoveZ\":333,\"speedRapidZ\":444}");
+    zassert_equal(g_conf.z.speedRapid, 444);
+}
+
+ZTEST(settings_fields, test_json_mask_past_bit_31)
+{
+    zassert_true(indexOf("handwheelLagMsX") > 31);
+    int64_t mask = parse("{\"handwheelLagMsX\":250,\"encoderPpr\":600}");
+    zassert_equal(mask, (int64_t)(BIT64(indexOf("handwheelLagMsX")) | BIT64(indexOf("encoderPpr"))));
+}
+
+ZTEST(settings_fields, test_json_invalid)
+{
+    zassert_true(parse("{\"speedRapidZ\":") < 0);
+}
+
+ZTEST(settings_fields, test_param_names)
+{
+    char name[40];
+    bool length;
+    zassert_true(paramName(*findField("probeFeedDuPerMin"), name, sizeof(name), length));
+    zassert_str_equal(name, "_probe_feed");
+    zassert_true(length);
+    zassert_true(paramName(*findField("backlashDuZ"), name, sizeof(name), length));
+    zassert_str_equal(name, "_backlash_z");
+    zassert_true(paramName(*findField("maxTravelMmX"), name, sizeof(name), length));
+    zassert_str_equal(name, "_max_travel_mm_x");
+    zassert_false(length);
+    zassert_true(paramName(*findField("probeDstDu"), name, sizeof(name), length));
+    zassert_str_equal(name, "_probe_dst");
+    g_conf.probeOffsetDu = 1234;
+    double v;
+    zassert_true(paramValue("_probe_offset", g_conf, v, length));
+    zassert_within(v, 1234.0, 1e-9);
+    zassert_true(length);
+    zassert_true(paramValue("_invert_encoder", g_conf, v, length));
+    zassert_false(paramValue("_nope", g_conf, v, length));
+}

@@ -21,6 +21,8 @@
 #include "Events.hpp"
 #include "Machine.hpp"
 #include "Watchdog.hpp"
+#include "ModeSteps.hpp"
+#include "Wcs.hpp"
 #include <stdio.h>
 #include <string.h>
 #include <zephyr/kernel.h>
@@ -56,7 +58,7 @@ namespace
         &Mode::Detail::SLOT,
         &Mode::Detail::ELLIPSE,
         &Mode::Detail::GCODE,
-        &Mode::Detail::PROBE,
+        nullptr,
     };
 
     K_MUTEX_DEFINE(g_lock);
@@ -68,30 +70,17 @@ namespace
     bool g_spindleReverse = false;
     int32_t g_overridePct = 100;
 
-    // Rapid to 0,0, Z first, before the op starts there.
-    enum class Homing : uint8_t
-    {
-        None,
-        Z,
-        X,
-    };
-    Homing g_homing = Homing::None;
+    // start zero: o<zero> runs first, then this mode starts.
+    constexpr const char *ZERO_CALL = "o<zero> call [1] [1]";
+    bool g_startAfter = false;
+    Mode::Id g_startAfterId = Mode::Id::Gear;
 
     bool &ownedFlag(Stepper::Axis axis)
     {
         return axis == Stepper::Axis::Z ? g_ownedZ : g_ownedX;
     }
 
-    void releaseAxes()
-    {
-        for (Stepper::Axis axis : {Stepper::Axis::Z, Stepper::Axis::X}) {
-            if (ownedFlag(axis)) {
-                ownedFlag(axis) = false;
-                Machine::setModeEngaged(axis, false);
-                Stepper::setHoldRequested(axis, false);
-            }
-        }
-    }
+    using Mode::Detail::releaseAxes;
 
     void publishRunning(bool running)
     {
@@ -104,32 +93,44 @@ namespace
         releaseAxes();
         bool wasRunning = g_active != nullptr;
         g_active = nullptr;
-        g_homing = Homing::None;
+        g_startAfter = false;
         if (wasRunning) {
             publishRunning(false);
         }
     }
 
-    void tickHoming(int64_t spindlePos)
+    const char *startOps(Mode::Id id, const Ops *ops)
     {
-        if (g_homing == Homing::Z) {
-            if (Mode::Detail::moveAndWait(Stepper::Axis::Z, 0)) {
-                g_homing = Homing::X;
-            }
-            return;
+        if (g_active) {
+            return g_active->resume && g_active->resume() ? nullptr : "already running";
         }
-        if (!Mode::Detail::moveAndWait(Stepper::Axis::X, 0)) {
-            return;
+        if (Mode::Detail::mdiActive()) {
+            return "MDI running";
         }
-        g_homing = Homing::None;
-        releaseAxes();
-        const char *refusal = g_active->start(spindlePos);
+        if (!ops) {
+            return "mode not implemented";
+        }
+        const Mode::Detail::Param *missing = Mode::Detail::firstMissing(*ops);
+        if (missing) {
+            static char reason[32];
+            snprintf(reason, sizeof(reason), "set %s first", missing->name);
+            return reason;
+        }
+        g_activeId = id;
+        g_spindleReverse = ops->spindleReverse && *ops->spindleReverse;
+        g_overridePct = 100;
+        const char *refusal = ops->start(Encoder::filteredPosition());
         if (refusal) {
-            Mode::Detail::finish(refusal);
+            releaseAll();
+            return refusal;
         }
+        g_active = ops;
+        g_lastError = "";
+        publishRunning(true);
+        return nullptr;
     }
 
-    K_THREAD_STACK_DEFINE(g_runnerStack, 2048);
+    K_THREAD_STACK_DEFINE(g_runnerStack, 4096);
     struct k_thread g_runnerThread;
 
     void runnerLoop(void *, void *, void *)
@@ -138,9 +139,7 @@ namespace
         while (true) {
             Watchdog::feed(wdt);
             k_mutex_lock(&g_lock, K_FOREVER);
-            if (g_active && g_homing != Homing::None) {
-                tickHoming(Encoder::filteredPosition());
-            } else if (g_active) {
+            if (g_active) {
                 int64_t spindlePos = Encoder::filteredPosition();
                 Encoder::Direction wrong = g_spindleReverse ? Encoder::Direction::Forward : Encoder::Direction::Reverse;
                 if (g_active->spindleReverse != nullptr && Encoder::direction() == wrong) {
@@ -148,6 +147,8 @@ namespace
                 } else {
                     g_active->tick(spindlePos);
                 }
+            } else if (Mode::Detail::mdiActive()) {
+                Mode::Detail::mdiTick(Encoder::filteredPosition());
             }
             k_mutex_unlock(&g_lock);
             k_sleep(K_MSEC(TICK_PERIOD_MS));
@@ -183,7 +184,7 @@ namespace Mode::Detail
 
     int spindleSign()
     {
-        return g_spindleReverse ? -1 : 1;
+        return g_active && g_spindleReverse ? -1 : 1;
     }
 
     bool isRunning(Id id)
@@ -197,6 +198,28 @@ namespace Mode::Detail
         if (o) {
             RunSettings::saveModeParams(NAMES[(size_t)id], o->params, o->paramsSize);
         }
+    }
+
+    void releaseAxes()
+    {
+        probeDisarm();
+        for (Stepper::Axis axis : {Stepper::Axis::Z, Stepper::Axis::X}) {
+            if (ownedFlag(axis)) {
+                ownedFlag(axis) = false;
+                Machine::setModeEngaged(axis, false);
+                Stepper::setHoldRequested(axis, false);
+            }
+        }
+    }
+
+    void setLastError(const char *reason)
+    {
+        g_lastError = reason;
+    }
+
+    void resetFeedOverride()
+    {
+        g_overridePct = 100;
     }
 
     const char *claim(Stepper::Axis axis)
@@ -222,6 +245,19 @@ namespace Mode::Detail
                 Stepper::stop(axis);
             }
         }
+        if (!reason && g_startAfter) {
+            // Running stays on from o<zero> into the mode.
+            Mode::Id next = g_startAfterId;
+            releaseAxes();
+            g_active = nullptr;
+            g_startAfter = false;
+            const char *refusal = startOps(next, OPS[(size_t)next]);
+            if (refusal) {
+                g_lastError = refusal;
+                publishRunning(false);
+            }
+            return;
+        }
         releaseAll();
     }
 }
@@ -235,6 +271,7 @@ namespace Mode
                 RunSettings::loadModeParams(NAMES[i], OPS[i]->params, OPS[i]->paramsSize);
             }
         }
+        Detail::mdiBegin();
         k_thread_create(&g_runnerThread, g_runnerStack, K_THREAD_STACK_SIZEOF(g_runnerStack), runnerLoop, nullptr,
                         nullptr, nullptr, K_PRIO_PREEMPT(5), 0, K_NO_WAIT);
     }
@@ -266,6 +303,12 @@ namespace Mode
         return g_active != nullptr;
     }
 
+    bool busy()
+    {
+        Detail::Guard guard;
+        return g_active != nullptr || Detail::mdiActive();
+    }
+
     bool owns(Stepper::Axis axis)
     {
         Detail::Guard guard;
@@ -285,11 +328,11 @@ namespace Mode
     const char *start(bool fromZero)
     {
         Detail::Guard guard;
-        if (g_active) {
-            return g_active->resume && g_active->resume() ? nullptr : "already running";
-        }
         Id id = current();
         const Ops *ops = OPS[(size_t)id];
+        if (!fromZero || g_active) {
+            return startOps(id, ops);
+        }
         if (!ops) {
             return "mode not implemented";
         }
@@ -299,32 +342,37 @@ namespace Mode
             snprintf(reason, sizeof(reason), "set %s first", missing->name);
             return reason;
         }
-        g_activeId = id;
-        g_spindleReverse = ops->spindleReverse && *ops->spindleReverse;
-        g_overridePct = 100;
-        const char *refusal = nullptr;
-        if (fromZero) {
-            refusal = Detail::claim(Stepper::Axis::Z);
-            if (!refusal) {
-                refusal = Detail::claim(Stepper::Axis::X);
-            }
-            g_homing = Homing::Z;
-        } else {
-            refusal = ops->start(Encoder::filteredPosition());
+        Detail::gcodeSetCall(ZERO_CALL);
+        const char *err = startOps(Id::Gcode, &Detail::GCODE);
+        Detail::gcodeSetCall(nullptr);
+        if (!err) {
+            g_startAfter = true;
+            g_startAfterId = id;
         }
-        if (refusal) {
-            releaseAll();
-            return refusal;
+        return err;
+    }
+
+    const char *call(const char *line)
+    {
+        Detail::Guard guard;
+        if (g_active) {
+            return "already running";
         }
-        g_active = ops;
-        g_lastError = "";
-        publishRunning(true);
-        return nullptr;
+        Detail::gcodeSetCall(line);
+        const char *err = startOps(Id::Gcode, &Detail::GCODE);
+        Detail::gcodeSetCall(nullptr);
+        return err;
+    }
+
+    bool gcodeRunning()
+    {
+        Detail::Guard guard;
+        return g_active && g_activeId == Id::Gcode;
     }
 
     bool hasFeedOverride(Id id)
     {
-        return OPS[(size_t)id] && id != Id::Thread && id != Id::Probe;
+        return OPS[(size_t)id] && id != Id::Thread;
     }
 
     bool startsAtZero(Id id)
@@ -339,7 +387,7 @@ namespace Mode
 
     StartPrompt startPrompt()
     {
-        bool atZero = Stepper::position(Stepper::Axis::Z) == 0 && Stepper::position(Stepper::Axis::X) == 0;
+        bool atZero = Wcs::position(Stepper::Axis::Z) == 0 && Wcs::position(Stepper::Axis::X) == 0;
         if (running() || atZero) {
             return StartPrompt::None;
         }
@@ -364,10 +412,10 @@ namespace Mode
     const char *setFeedOverride(int32_t pct)
     {
         Detail::Guard guard;
-        if (!g_active) {
+        if (!g_active && !Detail::mdiActive()) {
             return "not running";
         }
-        if (!hasFeedOverride(g_activeId)) {
+        if (g_active && !hasFeedOverride(g_activeId)) {
             return "no feed override in this mode";
         }
         g_overridePct = CLAMP(pct, OVERRIDE_MIN_PCT, OVERRIDE_MAX_PCT);
@@ -380,7 +428,7 @@ namespace Mode
         if (!g_active) {
             return "not running";
         }
-        if (!g_active->skip || g_homing != Homing::None) {
+        if (!g_active->skip) {
             return "no passes to skip";
         }
         g_active->skip();
@@ -393,9 +441,7 @@ namespace Mode
         Progress p = {"", 0, 0, false, 0};
         if (g_active) {
             p.phase = "run";
-            if (g_homing != Homing::None) {
-                p.phase = "position";
-            } else if (g_active->progress) {
+            if (g_active->progress) {
                 g_active->progress(p);
             }
         }
@@ -411,6 +457,7 @@ namespace Mode
     void stop()
     {
         Detail::Guard guard;
+        Detail::mdiClear();
         releaseAll();
         for (Stepper::Axis axis : {Stepper::Axis::Z, Stepper::Axis::X}) {
             Stepper::stop(axis);

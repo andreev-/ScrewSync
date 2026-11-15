@@ -36,7 +36,7 @@ Multi-pass modes show the phase and pass number, and can skip a pass.
 - Spring pass at full depth.
 - Multiple starts, left/right hand, external/internal, tapered threads.
 - Reverse threading with an inverted tool, feeding away from the chuck.
-- Thread mode, G-code G32 and Gear follow one helix, so a rerun lands in
+- Thread mode, G-code threading and Gear follow one helix, so a rerun lands in
   the same groove. See [manual.md](manual.md), "Thread alignment".
 
 ## Probing
@@ -44,15 +44,24 @@ Multi-pass modes show the phase and pass number, and can skip a pass.
 - Touch off Z or X in either direction with a contact plate or a switch
   probe.
 - Fast first touch, slow reprobe, then the axis is zeroed on the surface.
+- The cycle is an NGC routine; a saved routine can replace it.
 - A contact light shows the probe input live.
 
 ## G-code
 
 - Paste or upload programs on the web client, with a toolpath preview.
-  Made for [LatheCode](https://kachurovskiy.com/lathecode/).
+  [LatheCode](https://kachurovskiy.com/lathecode/) and standard LinuxCNC
+  G-code.
 - Programs are stored on the device and started from the display, which
   shows the preview, the tool position and step progress.
-- Linear moves, spindle-synchronized threading (G32), and M0/M1 pauses.
+- Linear moves, spindle-synchronized threading (G33; LatheCode G32),
+  G10 L20 position setting, and M0/M1 pauses.
+- MDI: G-code lines on the web client or the serial console, with modes
+  kept between lines. G38 probe moves.
+- LinuxCNC NGC: parameters, expressions, O-word subs, conditions and
+  loops, G38 results, settings as parameters. Run at execution time.
+- NGC routines stored on the device and called by name, also as a
+  command.
 - Programs with the wrong axis directions are refused; the web client
   offers to flip them.
 
@@ -80,7 +89,8 @@ Multi-pass modes show the phase and pass number, and can skip a pass.
 
 - Machine settings, with help on every field.
 - Thread table editor.
-- G-code programs.
+- G-code programs and routines.
+- MDI console.
 - Wi-Fi, as an access point and as a station.
 - Settings backup and restore.
 - Device log viewer.

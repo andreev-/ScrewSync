@@ -25,6 +25,7 @@
 #include <zephyr/sys/util.h>
 #include "Command.hpp"
 #include "Events.hpp"
+#include "GcodeMdi.hpp"
 #include "Settings.hpp"
 #include "Wifi.hpp"
 #include "Machine.hpp"
@@ -135,6 +136,12 @@ namespace
     static_assert(WS_MAX_CLIENTS <= ATOMIC_BITS, "one dirty bit per slot");
     atomic_t g_settingsDirty = ATOMIC_INIT(0);
     atomic_t g_statusDirty = ATOMIC_INIT(0);
+    atomic_t g_probeDirty = ATOMIC_INIT(0);
+    struct k_spinlock g_probeLock;
+    Events::ProbeResult g_probeResult;
+    atomic_t g_printDirty = ATOMIC_INIT(0);
+    struct k_spinlock g_printLock;
+    Events::Print g_print;
 
     void onSettings(const struct zbus_channel *)
     {
@@ -144,6 +151,22 @@ namespace
     void onRunning(const struct zbus_channel *)
     {
         atomic_set(&g_statusDirty, ALL_SLOTS);
+    }
+
+    void onProbe(const struct zbus_channel *chan)
+    {
+        k_spinlock_key_t key = k_spin_lock(&g_probeLock);
+        g_probeResult = *static_cast<const Events::ProbeResult *>(zbus_chan_const_msg(chan));
+        k_spin_unlock(&g_probeLock, key);
+        atomic_set(&g_probeDirty, ALL_SLOTS);
+    }
+
+    void onPrint(const struct zbus_channel *chan)
+    {
+        k_spinlock_key_t key = k_spin_lock(&g_printLock);
+        g_print = *static_cast<const Events::Print *>(zbus_chan_const_msg(chan));
+        k_spin_unlock(&g_printLock, key);
+        atomic_set(&g_printDirty, ALL_SLOTS);
     }
 
     void sendTo(int sock, const char *json, int len)
@@ -189,8 +212,7 @@ namespace
     bool isStatusVerb(const char *verb)
     {
         static const char *const VERBS[] = {"jog", "mode", "start", "stop", "skip", "gear", "async",
-                                            "turn", "thread", "part", "slot", "ellipse", "units", "enable",
-                                            "move", "zero"};
+                                            "turn", "thread", "part", "slot", "ellipse", "units"};
         for (const char *v : VERBS) {
             if (!strcmp(verb, v)) {
                 return true;
@@ -236,6 +258,8 @@ namespace
         {
             atomic_clear_bit(&g_settingsDirty, slot);
             atomic_clear_bit(&g_statusDirty, slot);
+            atomic_clear_bit(&g_probeDirty, slot);
+            atomic_clear_bit(&g_printDirty, slot);
             sendTo(sock, json, WsMessages::status(json, JSON_REPLY_BUF));
             sendTo(sock, bigJson, WsMessages::settings(bigJson, JSON_BIG_BUF));
             sendTo(sock, json, WsMessages::wifi(json, JSON_REPLY_BUF));
@@ -259,6 +283,20 @@ namespace
             }
             if (atomic_test_and_clear_bit(&g_settingsDirty, slot)) {
                 sendTo(sock, bigJson, WsMessages::settings(bigJson, JSON_BIG_BUF));
+            }
+            if (atomic_test_and_clear_bit(&g_probeDirty, slot)) {
+                k_spinlock_key_t key = k_spin_lock(&g_probeLock);
+                Events::ProbeResult result = g_probeResult;
+                k_spin_unlock(&g_probeLock, key);
+                char text[64];
+                Events::formatProbe(result, text, sizeof(text));
+                sendTo(sock, json, WsMessages::typed(json, JSON_REPLY_BUF, "probe", text));
+            }
+            if (atomic_test_and_clear_bit(&g_printDirty, slot)) {
+                k_spinlock_key_t key = k_spin_lock(&g_printLock);
+                Events::Print print = g_print;
+                k_spin_unlock(&g_printLock, key);
+                sendTo(sock, json, WsMessages::typed(json, JSON_REPLY_BUF, "print", print.text));
             }
             if (atomic_test_and_clear_bit(&g_statusDirty, slot) || statusDue(now)) {
                 sendTo(sock, json, WsMessages::status(json, JSON_REPLY_BUF));
@@ -287,7 +325,7 @@ namespace
                 broadcast(json, WsMessages::wifi(json, JSON_REPLY_BUF));
             } else if (!strcmp(verb, "settings") && isSettingsQuery(line)) {
                 sendTo(sock, bigJson, WsMessages::settings(bigJson, JSON_BIG_BUF));
-            } else if (isStatusVerb(verb)) {
+            } else if (isStatusVerb(verb) || Gcode::isMdiLine(line[0] == Gcode::MDI_UI_MARKER ? line + 1 : line)) {
                 // Same throttle as idle(): a burst of commands must not raise the status rate.
                 uint32_t now = k_uptime_get_32();
                 if (statusDue(now)) {
@@ -401,6 +439,10 @@ ZBUS_LISTENER_DEFINE(WS_SETTINGS_LIS, onSettings);
 ZBUS_CHAN_ADD_OBS(SETTINGS_CHAN, WS_SETTINGS_LIS, 3);
 ZBUS_LISTENER_DEFINE(WS_RUNNING_LIS, onRunning);
 ZBUS_CHAN_ADD_OBS(RUNNING_CHAN, WS_RUNNING_LIS, 3);
+ZBUS_LISTENER_DEFINE(WS_PROBE_LIS, onProbe);
+ZBUS_CHAN_ADD_OBS(PROBE_CHAN, WS_PROBE_LIS, 3);
+ZBUS_LISTENER_DEFINE(WS_PRINT_LIS, onPrint);
+ZBUS_CHAN_ADD_OBS(PRINT_CHAN, WS_PRINT_LIS, 3);
 
 struct http_resource_detail_websocket g_wsCommandDetail = {
     .common = {.bitmask_of_supported_http_methods = BIT(HTTP_GET), .type = HTTP_RESOURCE_TYPE_WEBSOCKET},

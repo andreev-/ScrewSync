@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zephyr/sys/util.h>
 
 namespace
 {
@@ -72,12 +73,14 @@ namespace Settings
         {"probeFeedDuPerMin", FieldType::I32, offsetof(Conf, probeFeedDuPerMin), 1, 60000000},
         {"reprobeFeedDuPerMin", FieldType::I32, offsetof(Conf, reprobeFeedDuPerMin), 1, 60000000},
         {"probeBackOffDu", FieldType::I32, offsetof(Conf, probeBackOffDu), 1, 10000000},
+        {"probeDstDu", FieldType::I32, offsetof(Conf, probeDstDu), 0, 10000000},
+        {"probeOffsetDu", FieldType::I32, offsetof(Conf, probeOffsetDu), 0, 10000000},
         {"screwPitchDuZ", FieldType::I32, offsetof(Conf, z.screwPitchDu), 1, 10000000},
         {"motorStepsZ", FieldType::I32, offsetof(Conf, z.motorSteps), 1, 1000000},
         {"speedStartZ", FieldType::I32, offsetof(Conf, z.speedStart), 1, 1000000},
         {"accelerationZ", FieldType::I32, offsetof(Conf, z.acceleration), 1, 100000000},
         {"decelerationZ", FieldType::I32, offsetof(Conf, z.deceleration), 1, 100000000},
-        {"speedManualMoveZ", FieldType::I32, offsetof(Conf, z.speedManualMove), 1, 1000000},
+        {"speedRapidZ", FieldType::I32, offsetof(Conf, z.speedRapid), 1, 1000000},
         {"invertDirectionZ", FieldType::Bool, offsetof(Conf, z.invertDirection), 0, 0},
         {"invertEnableZ", FieldType::Bool, offsetof(Conf, z.invertEnable), 0, 0},
         {"maxTravelMmZ", FieldType::I32, offsetof(Conf, z.maxTravelMm), 1, 10000},
@@ -90,7 +93,7 @@ namespace Settings
         {"speedStartX", FieldType::I32, offsetof(Conf, x.speedStart), 1, 1000000},
         {"accelerationX", FieldType::I32, offsetof(Conf, x.acceleration), 1, 100000000},
         {"decelerationX", FieldType::I32, offsetof(Conf, x.deceleration), 1, 100000000},
-        {"speedManualMoveX", FieldType::I32, offsetof(Conf, x.speedManualMove), 1, 1000000},
+        {"speedRapidX", FieldType::I32, offsetof(Conf, x.speedRapid), 1, 1000000},
         {"invertDirectionX", FieldType::Bool, offsetof(Conf, x.invertDirection), 0, 0},
         {"invertEnableX", FieldType::Bool, offsetof(Conf, x.invertEnable), 0, 0},
         {"maxTravelMmX", FieldType::I32, offsetof(Conf, x.maxTravelMm), 1, 10000},
@@ -115,13 +118,15 @@ namespace Settings
         JSON_OBJ_DESCR_PRIM(Settings::Conf, probeFeedDuPerMin, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM(Settings::Conf, reprobeFeedDuPerMin, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM(Settings::Conf, probeBackOffDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM(Settings::Conf, probeDstDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM(Settings::Conf, probeOffsetDu, JSON_TOK_NUMBER),
 
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "screwPitchDuZ", z.screwPitchDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "motorStepsZ", z.motorSteps, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedStartZ", z.speedStart, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "accelerationZ", z.acceleration, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "decelerationZ", z.deceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedManualMoveZ", z.speedManualMove, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedRapidZ", z.speedRapid, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "invertDirectionZ", z.invertDirection, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "invertEnableZ", z.invertEnable, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "maxTravelMmZ", z.maxTravelMm, JSON_TOK_NUMBER),
@@ -135,7 +140,7 @@ namespace Settings
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedStartX", x.speedStart, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "accelerationX", x.acceleration, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "decelerationX", x.deceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedManualMoveX", x.speedManualMove, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedRapidX", x.speedRapid, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "invertDirectionX", x.invertDirection, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "invertEnableX", x.invertEnable, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "maxTravelMmX", x.maxTravelMm, JSON_TOK_NUMBER),
@@ -145,6 +150,21 @@ namespace Settings
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "handwheelLagMsX", x.handwheelLagMs, JSON_TOK_NUMBER),
     };
 
+    const struct json_obj_descr RENAMED_JSON_DESCR[] = {
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedManualMoveZ", z.speedRapid, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedManualMoveX", x.speedRapid, JSON_TOK_NUMBER),
+    };
+
+    size_t fieldIndexAt(size_t offset)
+    {
+        for (size_t i = 0; i < CONF_JSON_FIELDS; i++) {
+            if (FIELDS[i].offset == offset) {
+                return i;
+            }
+        }
+        return CONF_JSON_FIELDS;
+    }
+
     const Field *findField(const char *name)
     {
         for (const Field &f : FIELDS) {
@@ -152,7 +172,41 @@ namespace Settings
                 return &f;
             }
         }
+        for (const auto &d : RENAMED_JSON_DESCR) {
+            if (!strcmp(d.field_name, name)) {
+                return &FIELDS[fieldIndexAt(d.offset)];
+            }
+        }
         return nullptr;
+    }
+
+    const char *oldName(const Field &field)
+    {
+        for (const auto &d : RENAMED_JSON_DESCR) {
+            if (d.offset == field.offset) {
+                return d.field_name;
+            }
+        }
+        return nullptr;
+    }
+
+    int64_t parseJson(char *json, size_t len, Conf &conf)
+    {
+        // Old names first, so the current names overwrite them.
+        int64_t renamed = json_obj_parse(json, len, RENAMED_JSON_DESCR, ARRAY_SIZE(RENAMED_JSON_DESCR), &conf);
+        if (renamed < 0) {
+            return renamed;
+        }
+        int64_t mask = json_obj_parse(json, len, CONF_JSON_DESCR, CONF_JSON_FIELDS, &conf);
+        if (mask < 0) {
+            return mask;
+        }
+        for (size_t i = 0; i < ARRAY_SIZE(RENAMED_JSON_DESCR); i++) {
+            if (renamed & BIT64(i)) {
+                mask |= (int64_t)BIT64(fieldIndexAt(RENAMED_JSON_DESCR[i].offset));
+            }
+        }
+        return mask;
     }
 
     void *fieldPtr(const Field &f, Conf &conf)
@@ -247,5 +301,67 @@ namespace Settings
             }
         }
         return true;
+    }
+
+    bool paramName(const Field &field, char *out, size_t outMax, bool &length)
+    {
+        static const char *const DROPPED[] = {"DuPerMin", "Du"};
+        size_t n = 0;
+        length = false;
+        if (outMax < 2) {
+            return false;
+        }
+        out[n++] = '_';
+        for (const char *p = field.name; *p;) {
+            bool dropped = false;
+            for (const char *d : DROPPED) {
+                size_t len = strlen(d);
+                char next = p[len];
+                if (!strncmp(p, d, len) && !(next >= 'a' && next <= 'z')) {
+                    p += len;
+                    length = true;
+                    dropped = true;
+                    break;
+                }
+            }
+            if (dropped) {
+                continue;
+            }
+            char c = *p++;
+            bool upper = c >= 'A' && c <= 'Z';
+            if (upper && n > 1 && n + 1 < outMax) {
+                out[n++] = '_';
+            }
+            if (n + 1 >= outMax) {
+                return false;
+            }
+            out[n++] = upper ? (char)(c - 'A' + 'a') : c;
+        }
+        out[n] = '\0';
+        return true;
+    }
+
+    bool paramValue(const char *name, const Conf &conf, double &value, bool &length)
+    {
+        char candidate[40];
+        for (const Field &f : FIELDS) {
+            if (!paramName(f, candidate, sizeof(candidate), length) || strcmp(candidate, name) != 0) {
+                continue;
+            }
+            const void *src = fieldPtr(f, conf);
+            switch (f.type) {
+            case FieldType::I32:
+                value = *(const int32_t *)src;
+                break;
+            case FieldType::Bool:
+                value = *(const bool *)src ? 1 : 0;
+                break;
+            case FieldType::Float:
+                value = *(const float *)src;
+                break;
+            }
+            return true;
+        }
+        return false;
     }
 }

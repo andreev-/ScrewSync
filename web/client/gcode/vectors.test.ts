@@ -2,11 +2,12 @@ import { readdirSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { interpretLine, type Step, type StepKind, type StepSink } from "./core"
-import { Lathecode } from "./lathecode"
+import { AXIS_X, AXIS_Z, interpretLine, type Step, type StepKind, type StepSink } from "./core"
+import { find } from "./dialects"
+import { Interpreter } from "./interpreter"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const VECTORS_DIR = join(HERE, "..", "..", "tests", "gcode", "lathecode")
+const VECTORS_ROOT = join(HERE, "..", "..", "tests", "gcode")
 
 interface Expectation {
   line: number
@@ -15,6 +16,7 @@ interface Expectation {
   zDu?: number
   xDu?: number
   feed?: number
+  axes?: number
 }
 
 function isMotionKind(kind: StepKind): boolean {
@@ -49,6 +51,7 @@ e.xDu = parseInt(tok.slice(2), 10)
 e.feed = parseInt(tok.slice(2), 10)
 }
     }
+    e.axes = (e.zDu !== undefined ? AXIS_Z : 0) | (e.xDu !== undefined ? AXIS_X : 0)
     out.push(e)
   }
   return out
@@ -61,9 +64,13 @@ class CollectSink implements StepSink {
   }
 }
 
-function runVector(gcodeText: string): { steps: Step[]; errorMsg: string | null; errorLine: number } {
-  const flavor = new Lathecode()
-  flavor.begin(0, 0)
+function runVector(dialectId: string, gcodeText: string): { steps: Step[]; errorMsg: string | null; errorLine: number } {
+  const dialect = find(dialectId)
+  if (!dialect) {
+    throw new Error(`unknown dialect ${dialectId}`)
+  }
+  const interp = new Interpreter()
+  dialect.begin(interp, 0, 0)
   const sink = new CollectSink()
 
   const lines = gcodeText.split("\n")
@@ -71,7 +78,7 @@ function runVector(gcodeText: string): { steps: Step[]; errorMsg: string | null;
   let errorLine = 0
   for (let i = 0; i < lines.length && !errorMsg; i++) {
     const lineNo = i + 1
-    const err = interpretLine(flavor, lines[i], lineNo, sink)
+    const err = interpretLine(dialect, interp, lines[i], lineNo, sink)
     if (err) {
       errorMsg = err
       errorLine = lineNo
@@ -80,12 +87,14 @@ function runVector(gcodeText: string): { steps: Step[]; errorMsg: string | null;
   return { steps: sink.steps, errorMsg, errorLine }
 }
 
+for (const dialectId of readdirSync(VECTORS_ROOT).sort()) {
+const VECTORS_DIR = join(VECTORS_ROOT, dialectId)
 const names = readdirSync(VECTORS_DIR)
   .filter((f) => f.endsWith(".gcode"))
   .map((f) => f.slice(0, -".gcode".length))
   .sort()
 
-describe("lathecode vectors", () => {
+describe(`${dialectId} vectors`, () => {
   it("found test vectors", () => {
     expect(names.length).toBeGreaterThan(0)
   })
@@ -95,7 +104,7 @@ describe("lathecode vectors", () => {
       const gcodeText = readFileSync(join(VECTORS_DIR, `${name}.gcode`), "utf-8")
       const stepsText = readFileSync(join(VECTORS_DIR, `${name}.steps`), "utf-8")
       const expectations = parseSteps(stepsText)
-      const { steps, errorMsg, errorLine } = runVector(gcodeText)
+      const { steps, errorMsg, errorLine } = runVector(dialectId, gcodeText)
 
       let stepIndex = 0
       for (const e of expectations) {
@@ -113,6 +122,15 @@ describe("lathecode vectors", () => {
           expect(s.zDu).toBe(e.zDu)
           expect(s.xDu).toBe(e.xDu)
         }
+        if (e.kind === "set-position") {
+          expect(s.axes).toBe(e.axes)
+          if (e.zDu !== undefined) {
+            expect(s.zDu).toBe(e.zDu)
+          }
+          if (e.xDu !== undefined) {
+            expect(s.xDu).toBe(e.xDu)
+          }
+        }
         if (e.kind && hasFeedField(e.kind)) {
           expect(s.feed).toBe(e.feed)
         }
@@ -123,3 +141,4 @@ describe("lathecode vectors", () => {
     })
   }
 })
+}

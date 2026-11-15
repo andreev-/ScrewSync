@@ -16,18 +16,24 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 #include "GcodeMeta.hpp"
+#include "GcodeDialects.hpp"
+#include "GcodeProgram.hpp"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 namespace
 {
+    constexpr uint32_t DRY_RUN_LINES_MAX = 200000;
+
     struct CountingSink : Gcode::StepSink
     {
         uint32_t motionSteps = 0;
+        bool probe = false;
 
         void emit(const Gcode::Step &step) override
         {
+            probe = probe || step.kind == Gcode::StepKind::Probe;
             if (step.kind == Gcode::StepKind::Rapid || step.kind == Gcode::StepKind::Feed ||
                 step.kind == Gcode::StepKind::Thread) {
                 motionSteps++;
@@ -76,9 +82,9 @@ namespace GcodeMeta
         return true;
     }
 
-    int encodeHeader(const char *flavor, const char *name, char *out, size_t outMax)
+    int encodeHeader(const char *dialect, const char *name, char *out, size_t outMax)
     {
-        int n = snprintf(out, outMax, "%s\t%s\n", flavor, name);
+        int n = snprintf(out, outMax, "%s\t%s\n", dialect, name);
         if (n < 0 || (size_t)n >= outMax) {
             return -1;
         }
@@ -112,17 +118,17 @@ namespace GcodeMeta
             return false;
         }
 
-        out.flavor = text;
-        out.flavorLen = tab;
+        out.dialect = text;
+        out.dialectLen = tab;
         out.name = text + tab + 1;
         out.nameLen = lineLen - tab - 1;
         out.bodyOffset = i + 1;
-        return allowEmpty || (out.flavorLen > 0 && out.nameLen > 0);
+        return allowEmpty || (out.dialectLen > 0 && out.nameLen > 0);
     }
 
-    ValidateResult validateProgram(const char *text, size_t len, Gcode::Flavor &flavor)
+    ValidateResult validateProgram(const char *text, size_t len, Gcode::Dialect &dialect)
     {
-        ValidateResult r = {false, nullptr, 0, 0};
+        ValidateResult r = {false, nullptr, 0, 0, false};
         if (len == 0) {
             r.error = "empty program";
             return r;
@@ -137,50 +143,49 @@ namespace GcodeMeta
             r.error = "axes mismatch: set AXES RIGHT DOWN in LatheCode and regenerate";
             return r;
         }
-
-        flavor.begin(0, 0);
-        CountingSink sink;
-        uint32_t lineNo = 0;
-        size_t i = 0;
-        while (i < len) {
-            size_t lineStart = i;
-            while (i < len && text[i] != '\n') {
-                i++;
-            }
-            size_t lineLen = i - lineStart;
-            if (i < len) {
-                i++;
-            }
-            lineNo++;
-
-            if (lineLen > 0 && text[lineStart + lineLen - 1] == '\r') {
-                lineLen--;
-            }
-
-            if (lineLen >= Gcode::MAX_LINE_LEN) {
-                r.error = "line too long";
-                r.line = lineNo;
-                return r;
-            }
-
-            char lineBuf[Gcode::MAX_LINE_LEN];
-            memcpy(lineBuf, text + lineStart, lineLen);
-            lineBuf[lineLen] = '\0';
-
-            const char *err = Gcode::interpretLine(flavor, lineBuf, lineNo, sink);
-            if (err) {
-                r.error = err;
-                r.line = lineNo;
-                return r;
-            }
+        r.error = Gcode::checkProgram(text, len, r.line);
+        if (r.error) {
+            return r;
+        }
+        r.line = 0;
+        if (!strcmp(dialect.id(), Gcode::ROUTINE_DIALECT)) {
+            r.ok = true;
+            return r;
         }
 
-        if (sink.motionSteps == 0) {
+        static Gcode::Params params;
+        static Gcode::Program program;
+        params.clear();
+        program.begin({&dialect, &params, nullptr, nullptr, true}, text, len, 0, 0);
+        CountingSink sink;
+        bool known = true;
+        for (uint32_t lines = 0;; lines++) {
+            if (lines >= DRY_RUN_LINES_MAX) {
+                known = false;
+                break;
+            }
+            Gcode::Program::Status s = program.next(sink, 1);
+            if (s == Gcode::Program::Status::Error) {
+                r.error = program.error();
+                r.line = program.errorLine();
+                return r;
+            }
+            if (sink.probe) {
+                known = false;
+                break;
+            }
+            if (s == Gcode::Program::Status::End) {
+                known = !program.unknown();
+                break;
+            }
+        }
+        if (known && sink.motionSteps == 0) {
             r.error = "no motion steps";
             return r;
         }
         r.ok = true;
         r.steps = sink.motionSteps;
+        r.stepsKnown = known;
         return r;
     }
 

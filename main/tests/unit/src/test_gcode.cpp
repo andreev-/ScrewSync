@@ -19,15 +19,26 @@
 #include <string.h>
 #include <stdlib.h>
 #include "GcodeCore.hpp"
-#include "GcodeFlavors.hpp"
-#include "GcodeLathecode.hpp"
+#include "GcodeDialects.hpp"
+#include "GcodeInterpreter.hpp"
+#include "GcodeProgram.hpp"
 
 using namespace Gcode;
 
 namespace
 {
+    const char *tokenize(const char *text, Words &out)
+    {
+        static Params params;
+        static Line line;
+        Context ctx{&params, nullptr, DU_PER_MM};
+        const char *err = parseLine(text, ctx, line);
+        out = line.words;
+        return err;
+    }
+
     const unsigned char VECTORS_BLOB[] = {
-#include "gcode_lathecode_vectors.inc"
+#include "gcode_vectors.inc"
     };
     constexpr size_t VECTORS_BLOB_LEN = sizeof(VECTORS_BLOB);
     constexpr size_t MAX_BLOB_CHARS = 32768;
@@ -197,6 +208,14 @@ namespace
             return "optional-pause";
         case StepKind::End:
             return "end";
+        case StepKind::SetPosition:
+            return "set-position";
+        case StepKind::Motors:
+            return "motors";
+        case StepKind::SpindleAngle:
+            return "spindle-angle";
+        case StepKind::Probe:
+            return "probe";
         }
         return "?";
     }
@@ -219,6 +238,7 @@ namespace
         int32_t zDu;
         int32_t xDu;
         int32_t feed;
+        uint8_t axes;
     };
 
     bool parseKind(const char *text, StepKind &kind)
@@ -245,6 +265,10 @@ namespace
         }
         if (strcmp(text, "end") == 0) {
             kind = StepKind::End;
+            return true;
+        }
+        if (strcmp(text, "set-position") == 0) {
+            kind = StepKind::SetPosition;
             return true;
         }
         return false;
@@ -291,6 +315,7 @@ namespace
                         haveF = true;
                     }
                 }
+                e.axes = (haveZ ? AXIS_Z : 0) | (haveX ? AXIS_X : 0);
                 zassert_true(!isMotionKind(e.kind) || (haveZ && haveX), "missing z/x in .steps line");
                 zassert_true(!hasFeedField(e.kind) || haveF, "missing f in .steps line");
             }
@@ -304,18 +329,40 @@ namespace
         Expectation expectations[MAX_STEPS_PER_VECTOR];
         size_t expectCount = parseSteps(v.stepsLines, v.stepsLineCount, expectations, MAX_STEPS_PER_VECTOR);
 
-        Lathecode flavor;
-        flavor.begin(0, 0);
+        char dialectId[16];
+        const char *slash = strchr(v.name, '/');
+        zassert_not_null(slash, "%s: no dialect folder", v.name);
+        size_t idLen = MIN((size_t)(slash - v.name), sizeof(dialectId) - 1);
+        memcpy(dialectId, v.name, idLen);
+        dialectId[idLen] = '\0';
+        Dialect *dialect = Gcode::find(dialectId);
+        zassert_not_null(dialect, "%s: unknown dialect", v.name);
+
+        static char text[MAX_BLOB_CHARS];
+        size_t len = 0;
+        for (size_t i = 0; i < v.gcodeLineCount; i++) {
+            size_t n = strlen(v.gcodeLines[i]);
+            memcpy(text + len, v.gcodeLines[i], n);
+            len += n;
+            text[len++] = '\n';
+        }
+        static Params params;
+        static Program program;
+        params.clear();
+        program.begin({dialect, &params, nullptr, nullptr, false}, text, len, 0, 0);
         CollectSink sink;
 
         const char *errorMsg = nullptr;
         uint32_t errorLine = 0;
-        for (size_t i = 0; i < v.gcodeLineCount && !errorMsg; i++) {
-            uint32_t lineNo = (uint32_t)(i + 1);
-            const char *err = interpretLine(flavor, v.gcodeLines[i], lineNo, sink);
-            if (err) {
-                errorMsg = err;
-                errorLine = lineNo;
+        while (true) {
+            Program::Status status = program.next(sink, 1000);
+            if (status == Program::Status::Error) {
+                errorMsg = program.error();
+                errorLine = program.errorLine();
+                break;
+            }
+            if (status == Program::Status::End) {
+                break;
             }
         }
 
@@ -335,6 +382,11 @@ namespace
             if (isMotionKind(e.kind)) {
                 zassert_equal(s.zDu, e.zDu, "%s: step %u wrong zDu", v.name, (unsigned)stepIndex);
                 zassert_equal(s.xDu, e.xDu, "%s: step %u wrong xDu", v.name, (unsigned)stepIndex);
+            }
+            if (e.kind == StepKind::SetPosition) {
+                zassert_equal(s.axes, e.axes, "%s: step %u wrong axes", v.name, (unsigned)stepIndex);
+                zassert_true(!(e.axes & AXIS_Z) || s.zDu == e.zDu, "%s: step %u wrong zDu", v.name, (unsigned)stepIndex);
+                zassert_true(!(e.axes & AXIS_X) || s.xDu == e.xDu, "%s: step %u wrong xDu", v.name, (unsigned)stepIndex);
             }
             if (hasFeedField(e.kind)) {
                 zassert_equal(s.feed, e.feed, "%s: step %u wrong feed", v.name, (unsigned)stepIndex);
@@ -447,15 +499,16 @@ ZTEST(gcode, test_tokenize_number_forms)
     zassert_within(words.words[0].value, -0.5, 1e-9);
 }
 
-ZTEST(gcode, test_flavor_registry)
+ZTEST(gcode, test_dialect_registry)
 {
     zassert_true(Gcode::count() > 0);
     for (size_t i = 0; i < Gcode::count(); i++) {
-        Flavor *flavor = Gcode::at(i);
-        zassert_not_null(flavor);
-        zassert_equal(Gcode::find(flavor->id()), flavor, "flavor ids are not unique");
+        Dialect *dialect = Gcode::at(i);
+        zassert_not_null(dialect);
+        zassert_equal(Gcode::find(dialect->id()), dialect, "dialect ids are not unique");
     }
     zassert_not_null(Gcode::find("lathecode"));
+    zassert_not_null(Gcode::find("linuxcnc"));
     zassert_is_null(Gcode::find("nope"));
     zassert_is_null(Gcode::find(""));
 }

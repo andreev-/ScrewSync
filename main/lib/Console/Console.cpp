@@ -23,6 +23,7 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include "Command.hpp"
+#include "Events.hpp"
 #ifdef CONFIG_SCREWSYNC_DISPLAY_IMAGE
 #include "DisplayImage.hpp"
 #endif
@@ -102,6 +103,26 @@ namespace
 #endif
 }
 
+K_MSGQ_DEFINE(g_probeResults, sizeof(Events::ProbeResult), 4, 8);
+
+static void onProbe(const struct zbus_channel *chan)
+{
+    k_msgq_put(&g_probeResults, zbus_chan_const_msg(chan), K_NO_WAIT);
+}
+
+ZBUS_LISTENER_DEFINE(CONSOLE_PROBE_LIS, onProbe);
+ZBUS_CHAN_ADD_OBS(PROBE_CHAN, CONSOLE_PROBE_LIS, 3);
+
+K_MSGQ_DEFINE(g_prints, sizeof(Events::Print), 4, 4);
+
+static void onPrint(const struct zbus_channel *chan)
+{
+    k_msgq_put(&g_prints, zbus_chan_const_msg(chan), K_NO_WAIT);
+}
+
+ZBUS_LISTENER_DEFINE(CONSOLE_PRINT_LIS, onPrint);
+ZBUS_CHAN_ADD_OBS(PRINT_CHAN, CONSOLE_PRINT_LIS, 3);
+
 void consolePoll()
 {
     static const struct device *dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
@@ -109,9 +130,25 @@ void consolePoll()
     static uint8_t len = 0;
     static char out[Command::MAX_REPLY_LEN] EXT_RAM_BSS;
 
+    Events::ProbeResult probe;
+    while (k_msgq_get(&g_probeResults, &probe, K_NO_WAIT) == 0) {
+        Events::formatProbe(probe, out, sizeof(out));
+        printf("probe %s\n", out);
+    }
+    static Events::Print print;
+    while (k_msgq_get(&g_prints, &print, K_NO_WAIT) == 0) {
+        printf("print %s\n", print.text);
+    }
+
     unsigned char c;
     while (uart_poll_in(dev, &c) == 0) {
         if (c == '\r') {
+            continue;
+        }
+        // A host's USB line-state request (21 22 00 ...) can show up in the
+        // RX stream: drop the partial line.
+        if (c < ' ' && c != '\n' && c != '\t') {
+            len = 0;
             continue;
         }
         if (c != '\n' && len < sizeof(buf) - 1) {

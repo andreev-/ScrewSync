@@ -41,7 +41,13 @@ namespace Settings
 
     extern const Field FIELDS[CONF_JSON_FIELDS];
 
+    // By current or old name.
     const Field *findField(const char *name);
+    // The old name of a renamed field, else nullptr.
+    const char *oldName(const Field &field);
+    // Parses a JSON object into conf. Old names are accepted; the current
+    // name wins if both are present. Mask bits are FIELDS indices.
+    int64_t parseJson(char *json, size_t len, Conf &conf);
     void *fieldPtr(const Field &field, Conf &conf);
     const void *fieldPtr(const Field &field, const Conf &conf);
     size_t fieldSize(const Field &field);
@@ -49,6 +55,10 @@ namespace Settings
     bool parseField(const Field &field, const char *value, Conf &conf, char *out, size_t outMax);
     // A JSON object of every field.
     void formatAll(const Conf &conf, char *out, size_t outMax);
+    // The field as a G-code parameter: "_" + snake case, with "Du" and
+    // "DuPerMin" dropped (length: the value is in du).
+    bool paramName(const Field &field, char *out, size_t outMax, bool &length);
+    bool paramValue(const char *name, const Conf &conf, double &value, bool &length);
 }
 
 #endif

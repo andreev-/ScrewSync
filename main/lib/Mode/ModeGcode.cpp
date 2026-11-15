@@ -16,24 +16,24 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 #include "ModeInternal.hpp"
-#include "ModeMath.hpp"
-#include "GcodeFlavors.hpp"
+#include "ModeSteps.hpp"
+#include "GcodeDialects.hpp"
+#include "GcodeProgram.hpp"
 #include "GcodeStore.hpp"
-#include "Rpm.hpp"
-#include <math.h>
-#include <stdlib.h>
-#include <zephyr/sys/util.h>
+#include "Events.hpp"
+#include "Wcs.hpp"
 #include <stdio.h>
 #include <string.h>
+#include <initializer_list>
 
-// Walks the active G-code program. Z/X are driven together: the axis with
-// the larger du delta is "main" and moves at the computed speed (rapid for
-// G0, feed-derived for G1, phased to the thread helix for G32); "aux"
-// chases main's fraction of progress, same pattern as a taper's X-follows-Z
-// elsewhere. Positions are absolute from the machine zero, no flavor offset.
+// Runs the active G-code program, or one routine call, line by line at
+// execution time; ModeSteps runs each step.
 namespace
 {
     using namespace Mode::Detail;
+
+    constexpr uint32_t LINES_PER_TICK = 64;
+    constexpr size_t QUEUE_LEN = 4;
 
     enum class Phase : uint8_t
     {
@@ -42,194 +42,126 @@ namespace
         Paused, // M0/M1: axes stay claimed until start
     };
 
+    struct Routines : Gcode::RoutineSource
+    {
+        const char *find(const char *label, size_t &len) override
+        {
+            return GcodeStore::routine(label, len);
+        }
+    };
+
+    struct Printer : Gcode::PrintSink
+    {
+        void print(const char *text) override
+        {
+            Events::Print msg = {};
+            strncpy(msg.text, text, sizeof(msg.text) - 1);
+            Events::publish(&PRINT_CHAN, &msg);
+        }
+    };
+
     struct Job
     {
-        Gcode::Flavor *flavor;
-        const char *text;
-        size_t len;
-        size_t pos;
-        uint32_t lineNo;
-
-        Gcode::Step pending[2];
+        Gcode::Step pending[QUEUE_LEN];
         size_t pendingCount;
         size_t pendingIndex;
 
         Phase phase;
+        bool spindleGated;
         uint32_t executedSteps; // motion steps completed, for display progress
-        Stepper::Axis mainAxis;
-        Stepper::Axis auxAxis;
-        int64_t mainFrom, mainTo, auxFrom, auxTo;
-        double vectorDu; // Feed only: path length for the per-minute speed split
-        Sync::Link thread;
+        StepMotion motion;
     };
 
     uint8_t g_dummyParams[1];
+    Gcode::Program g_program;
+    Routines g_routines;
+    Printer g_printer;
     Job g_job;
+    char g_callText[Gcode::MAX_LINE_LEN];
+    const char *g_call = nullptr;
+    char g_error[96];
 
     struct QueueSink : Gcode::StepSink
     {
-        Job *job;
         void emit(const Gcode::Step &step) override
         {
-            if (job->pendingCount < 2) {
-                job->pending[job->pendingCount++] = step;
+            if (g_job.pendingCount < QUEUE_LEN) {
+                g_job.pending[g_job.pendingCount++] = step;
             }
         }
     };
 
-    // Parses lines until a step is queued or the text runs out; pendingCount
-    // stays 0 at end of text (an implicit end, no M2/M30 required).
-    const char *fillPending(Job &j)
+    const char *formatError()
     {
-        while (j.pendingIndex >= j.pendingCount && j.pos < j.len) {
-            j.pendingCount = 0;
-            j.pendingIndex = 0;
-            size_t lineStart = j.pos;
-            size_t lineEnd = lineStart;
-            while (lineEnd < j.len && j.text[lineEnd] != '\n') {
-                lineEnd++;
-            }
-            size_t copyLen = lineEnd - lineStart;
-            if (copyLen >= Gcode::MAX_LINE_LEN) {
-                copyLen = Gcode::MAX_LINE_LEN - 1;
-            }
-            char buf[Gcode::MAX_LINE_LEN];
-            memcpy(buf, j.text + lineStart, copyLen);
-            buf[copyLen] = '\0';
-            j.pos = lineEnd < j.len ? lineEnd + 1 : lineEnd;
-            j.lineNo++;
-
-            QueueSink sink;
-            sink.job = &j;
-            const char *err = Gcode::interpretLine(*j.flavor, buf, j.lineNo, sink);
-            if (err) {
-                static char reason[48];
-                snprintf(reason, sizeof(reason), "line %lu: %s", (unsigned long)j.lineNo, err);
-                return reason;
-            }
+        if (!g_program.errorLine()) {
+            snprintf(g_error, sizeof(g_error), "%s", g_program.error());
+        } else if (*g_program.errorRoutine()) {
+            snprintf(g_error, sizeof(g_error), "%s line %lu: %s", g_program.errorRoutine(),
+                     (unsigned long)g_program.errorLine(), g_program.error());
+        } else {
+            snprintf(g_error, sizeof(g_error), "line %lu: %s", (unsigned long)g_program.errorLine(), g_program.error());
         }
-        return nullptr;
+        return g_error;
     }
 
-    double axisDeltaDu(Stepper::Axis axis, int32_t targetDu)
+    const char *claimEnabled()
     {
-        return (double)targetDu - stepsToDu(axis, Stepper::position(axis));
-    }
-
-    void beginStep(Job &j, const Gcode::Step &s, int64_t spindlePos)
-    {
-        double dz = axisDeltaDu(Stepper::Axis::Z, s.zDu);
-        double dx = axisDeltaDu(Stepper::Axis::X, s.xDu);
-        j.mainAxis = fabs(dz) >= fabs(dx) ? Stepper::Axis::Z : Stepper::Axis::X;
-        j.auxAxis = j.mainAxis == Stepper::Axis::Z ? Stepper::Axis::X : Stepper::Axis::Z;
-        j.mainFrom = Stepper::position(j.mainAxis);
-        j.auxFrom = Stepper::position(j.auxAxis);
-        j.mainTo = duToSteps(j.mainAxis, j.mainAxis == Stepper::Axis::Z ? s.zDu : s.xDu);
-        j.auxTo = duToSteps(j.auxAxis, j.auxAxis == Stepper::Axis::Z ? s.zDu : s.xDu);
-        // A sub-step du delta can round the chosen main axis to zero steps;
-        // fall back to whichever axis actually has somewhere to go.
-        if (j.mainTo == j.mainFrom && j.auxTo != j.auxFrom) {
-            Stepper::Axis axis = j.mainAxis;
-            j.mainAxis = j.auxAxis;
-            j.auxAxis = axis;
-            int64_t v = j.mainFrom;
-            j.mainFrom = j.auxFrom;
-            j.auxFrom = v;
-            v = j.mainTo;
-            j.mainTo = j.auxTo;
-            j.auxTo = v;
-        }
-        if (s.kind == Gcode::StepKind::Thread) {
-            int32_t dupr = (j.mainTo > j.mainFrom ? -1 : 1) * abs(s.feed);
-            j.thread = {j.mainAxis, dupr, 1, 0, j.mainFrom};
-            j.thread.originSpindlePos = helixOrigin(j.thread, j.mainFrom, 0, spindlePos);
-        } else if (s.kind == Gcode::StepKind::Feed) {
-            j.vectorDu = sqrt(dz * dz + dx * dx);
-        }
-        j.phase = Phase::Move;
-    }
-
-    // True once aux reaches its target; finishes the job on a travel clamp.
-    bool followAux(Job &j)
-    {
-        if (j.auxTo == j.auxFrom) {
-            return true;
-        }
-        double fraction = (double)(Stepper::position(j.mainAxis) - j.mainFrom) / (double)(j.mainTo - j.mainFrom);
-        int64_t target = j.auxFrom + (int64_t)llround(fraction * (double)(j.auxTo - j.auxFrom));
-        if (Stepper::moveTo(j.auxAxis, target, rapidSpeed(j.auxAxis)) != target) {
-            finish(Stepper::isDisabled(j.auxAxis) ? "axis disabled" : "travel limit");
-            return false;
-        }
-        return target == j.auxTo && Stepper::arrived(j.auxAxis) && Stepper::position(j.auxAxis) == j.auxTo;
-    }
-
-    // True once the step's motion is complete. Freezes (no finish, no
-    // progress) while the spindle isn't turning, like the reference
-    // firmware's "spindle pauses gcode" behaviour.
-    bool driveStep(Job &j, int64_t spindlePos, const Gcode::Step &s)
-    {
-        if (s.kind == Gcode::StepKind::Thread) {
-            int64_t target = j.thread.target(spindlePos);
-            int64_t lo = MIN(j.mainFrom, j.mainTo);
-            int64_t hi = MAX(j.mainFrom, j.mainTo);
-            target = CLAMP(target, lo, hi);
-            if (Stepper::moveTo(j.mainAxis, target, rapidSpeed(j.mainAxis)) != target) {
-                finish(Stepper::isDisabled(j.mainAxis) ? "axis disabled" : "travel limit");
-                return false;
+        bool any = false;
+        for (Stepper::Axis axis : {Stepper::Axis::Z, Stepper::Axis::X}) {
+            if (!Stepper::isDisabled(axis)) {
+                claim(axis);
+                any = true;
             }
-            bool mainDone = target == j.mainTo && Stepper::arrived(j.mainAxis) && Stepper::position(j.mainAxis) == j.mainTo;
-            bool auxDone = followAux(j);
-            return mainDone && auxDone;
         }
-        if (Rpm::value() == 0) {
-            Stepper::stop(j.mainAxis);
-            Stepper::stop(j.auxAxis);
-            return false;
-        }
-        int32_t cap = rapidSpeed(j.mainAxis);
-        int32_t speed = cap;
-        if (s.kind != Gcode::StepKind::Rapid) {
-            speed = vectorFeedStepsPerSec(j.vectorDu, overridden(s.feed), j.mainTo - j.mainFrom, cap);
-        }
-        if (Stepper::moveTo(j.mainAxis, j.mainTo, speed) != j.mainTo) {
-            finish(Stepper::isDisabled(j.mainAxis) ? "axis disabled" : "travel limit");
-            return false;
-        }
-        bool mainDone = Stepper::arrived(j.mainAxis) && Stepper::position(j.mainAxis) == j.mainTo;
-        bool auxDone = followAux(j);
-        return mainDone && auxDone;
+        return any ? nullptr : "axis disabled";
     }
 
     const char *startMode(int64_t)
     {
-        GcodeStore::ActiveInfo info = GcodeStore::active();
-        if (!info.present) {
-            return "no program loaded";
-        }
-        Gcode::Flavor *flavor = Gcode::find(info.flavor);
-        if (!flavor) {
-            return "unknown flavor";
-        }
-        const char *refusal = claim(Stepper::Axis::Z);
-        if (!refusal) {
-            refusal = claim(Stepper::Axis::X);
-        }
-        if (refusal) {
-            return refusal;
-        }
-
+        const char *text;
         size_t len;
-        const char *text = GcodeStore::activeText(len);
-        if (!text) {
-            return "no program loaded";
+        Gcode::Dialect *dialect;
+        if (g_call) {
+            Gcode::OKind kind;
+            char label[Gcode::LABEL_MAX + 1];
+            if (!Gcode::scanOword(g_call, kind, label) || kind != Gcode::OKind::Call) {
+                return "not a call";
+            }
+            const char *refusal = claimEnabled();
+            if (refusal) {
+                return refusal;
+            }
+            strncpy(g_callText, g_call, sizeof(g_callText) - 1);
+            g_callText[sizeof(g_callText) - 1] = '\0';
+            text = g_callText;
+            len = strlen(g_callText);
+            dialect = Gcode::find("linuxcnc");
+        } else {
+            GcodeStore::ActiveInfo info = GcodeStore::active();
+            if (!info.present) {
+                return "no program loaded";
+            }
+            dialect = Gcode::find(info.dialect);
+            if (!dialect) {
+                return "unknown dialect";
+            }
+            const char *refusal = claim(Stepper::Axis::Z);
+            if (!refusal) {
+                refusal = claim(Stepper::Axis::X);
+            }
+            if (refusal) {
+                return refusal;
+            }
+            text = GcodeStore::activeText(len);
+            if (!text) {
+                return "no program loaded";
+            }
         }
         g_job = {};
-        g_job.flavor = flavor;
-        g_job.text = text;
-        g_job.len = len;
-        flavor->begin((int32_t)llround(stepsToDu(Stepper::Axis::Z, Stepper::position(Stepper::Axis::Z))),
-                      (int32_t)llround(stepsToDu(Stepper::Axis::X, Stepper::position(Stepper::Axis::X))));
+        g_job.spindleGated = g_call == nullptr;
+        GcodeStore::resetRoutines();
+        g_program.begin({dialect, &params(), &paramSource(), &g_routines, false, &g_printer}, text, len,
+                        (int32_t)Wcs::position(Stepper::Axis::Z), (int32_t)Wcs::position(Stepper::Axis::X));
         return nullptr;
     }
 
@@ -242,6 +174,16 @@ namespace
         return true;
     }
 
+    void probeDone()
+    {
+        int32_t z = (int32_t)Wcs::position(Stepper::Axis::Z);
+        int32_t x = (int32_t)Wcs::position(Stepper::Axis::X);
+        bool onZ = g_job.motion.mainAxis == Stepper::Axis::Z;
+        int32_t tripZ = onZ ? g_job.motion.probeTripDu : z;
+        int32_t tripX = onZ ? x : g_job.motion.probeTripDu;
+        g_program.probeDone(z, x, tripZ, tripX, g_job.motion.probeFound, g_job.motion.probeMotorDu);
+    }
+
     void tickMode(int64_t spindlePos)
     {
         if (g_job.phase == Phase::Paused) {
@@ -249,7 +191,14 @@ namespace
         }
         if (g_job.phase == Phase::Move) {
             const Gcode::Step &s = g_job.pending[g_job.pendingIndex];
-            if (driveStep(g_job, spindlePos, s)) {
+            const char *error;
+            bool done = g_job.motion.drive(s, spindlePos, g_job.spindleGated, error);
+            if (error) {
+                finish(error);
+            } else if (done) {
+                if (s.kind == Gcode::StepKind::Probe) {
+                    probeDone();
+                }
                 g_job.pendingIndex++;
                 g_job.executedSteps++;
                 g_job.phase = Phase::Parse;
@@ -257,14 +206,22 @@ namespace
             return;
         }
 
-        const char *err = fillPending(g_job);
-        if (err) {
-            finish(err);
-            return;
-        }
         if (g_job.pendingIndex >= g_job.pendingCount) {
-            finish();
-            return;
+            g_job.pendingCount = 0;
+            g_job.pendingIndex = 0;
+            QueueSink sink;
+            Gcode::Program::Status status = g_program.next(sink, LINES_PER_TICK);
+            if (status == Gcode::Program::Status::Error) {
+                finish(formatError());
+                return;
+            }
+            if (status == Gcode::Program::Status::End) {
+                finish();
+                return;
+            }
+            if (status == Gcode::Program::Status::Busy) {
+                return;
+            }
         }
 
         const Gcode::Step &s = g_job.pending[g_job.pendingIndex];
@@ -272,7 +229,9 @@ namespace
         case Gcode::StepKind::Rapid:
         case Gcode::StepKind::Feed:
         case Gcode::StepKind::Thread:
-            beginStep(g_job, s, spindlePos);
+        case Gcode::StepKind::Probe:
+            g_job.motion.begin(s, spindlePos);
+            g_job.phase = Phase::Move;
             break;
         case Gcode::StepKind::Pause:
         case Gcode::StepKind::OptionalPause:
@@ -283,15 +242,23 @@ namespace
             g_job.pendingIndex++;
             finish();
             break;
+        case Gcode::StepKind::SetPosition:
+        case Gcode::StepKind::Motors:
+        case Gcode::StepKind::SpindleAngle:
+            g_job.pendingIndex++;
+            applyMachineStep(s);
+            break;
         }
     }
 
     void progressMode(Mode::Progress &out)
     {
-        if (g_job.phase == Phase::Move) {
-            out.phase = "move";
-        } else if (g_job.phase == Phase::Paused) {
+        if (g_job.phase == Phase::Paused) {
             out.phase = "paused";
+        } else if (*g_program.message()) {
+            out.phase = g_program.message();
+        } else if (g_job.phase == Phase::Move) {
+            out.phase = "move";
         } else {
             out.phase = "line";
         }
@@ -304,4 +271,9 @@ namespace Mode::Detail
 {
     const Ops GCODE = {true, g_dummyParams, sizeof(g_dummyParams), nullptr, 0, startMode, tickMode,
                        nullptr, nullptr, progressMode, nullptr, nullptr, resumeMode};
+
+    void gcodeSetCall(const char *line)
+    {
+        g_call = line;
+    }
 }

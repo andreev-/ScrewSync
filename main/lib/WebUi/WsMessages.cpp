@@ -26,7 +26,7 @@
 namespace
 {
     const struct json_obj_descr AXIS_DESCR[] = {
-        JSON_OBJ_DESCR_PRIM(Status::Axis, pos, JSON_TOK_INT64),
+        JSON_OBJ_DESCR_PRIM(Status::Axis, posDu, JSON_TOK_INT64),
         JSON_OBJ_DESCR_PRIM(Status::Axis, moving, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM(Status::Axis, enabled, JSON_TOK_TRUE),
     };
@@ -90,13 +90,15 @@ namespace
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "probeFeedDuPerMin", conf.probeFeedDuPerMin, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "reprobeFeedDuPerMin", conf.reprobeFeedDuPerMin, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "probeBackOffDu", conf.probeBackOffDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "probeDstDu", conf.probeDstDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "probeOffsetDu", conf.probeOffsetDu, JSON_TOK_NUMBER),
 
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "screwPitchDuZ", conf.z.screwPitchDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "motorStepsZ", conf.z.motorSteps, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedStartZ", conf.z.speedStart, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "accelerationZ", conf.z.acceleration, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "decelerationZ", conf.z.deceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedManualMoveZ", conf.z.speedManualMove, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedRapidZ", conf.z.speedRapid, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "invertDirectionZ", conf.z.invertDirection, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "invertEnableZ", conf.z.invertEnable, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "maxTravelMmZ", conf.z.maxTravelMm, JSON_TOK_NUMBER),
@@ -110,7 +112,7 @@ namespace
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedStartX", conf.x.speedStart, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "accelerationX", conf.x.acceleration, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "decelerationX", conf.x.deceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedManualMoveX", conf.x.speedManualMove, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedRapidX", conf.x.speedRapid, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "invertDirectionX", conf.x.invertDirection, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "invertEnableX", conf.x.invertEnable, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "maxTravelMmX", conf.x.maxTravelMm, JSON_TOK_NUMBER),

@@ -49,10 +49,29 @@ namespace Events
         char text[REFUSAL_MAX];
     };
 
+    // One finished G38 move. found: the input changed before the target.
+    struct ProbeResult
+    {
+        uint8_t axis; // Stepper::Axis
+        bool found;
+        int64_t posDu;   // work coordinates
+        int64_t motorDu; // motor position, without backlash compensation
+    };
+    // "z found=1 pos=<du> motor=<du>"
+    void formatProbe(const ProbeResult &r, char *out, size_t outMax);
+
+    constexpr size_t PRINT_MAX = 128;
+
+    // A G-code (PRINT, ...) line, parameters filled in.
+    struct Print
+    {
+        char text[PRINT_MAX];
+    };
+
     void publish(const struct zbus_channel *chan, const void *msg);
     void publishRefusal(const char *reply);
 }
 
-ZBUS_CHAN_DECLARE(RUNNING_CHAN, AXIS_ARRIVED_CHAN, SETTINGS_CHAN, REFUSAL_CHAN);
+ZBUS_CHAN_DECLARE(RUNNING_CHAN, AXIS_ARRIVED_CHAN, SETTINGS_CHAN, REFUSAL_CHAN, PROBE_CHAN, PRINT_CHAN);
 
 #endif

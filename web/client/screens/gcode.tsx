@@ -15,7 +15,8 @@ import {
 } from "../gcode/api"
 import { axesMismatched, flipMismatchedAxes, parseAxesHeader } from "../gcode/axes"
 import { interpretLine, type Step, type StepSink } from "../gcode/core"
-import { detectFlavor, find, list } from "../gcode/flavors"
+import { detectDialect, find, list, ROUTINE_DIALECT, usesNgc } from "../gcode/dialects"
+import { Interpreter } from "../gcode/interpreter"
 import { markLathecodeTravel } from "../gcode/lathecode"
 import { CANVAS_H, CANVAS_W, canvasToJpeg, computeMapping, drawPreview } from "../gcode/preview"
 import { useRouter } from "../router"
@@ -36,24 +37,29 @@ function idFromPath(path: string): string | null {
 interface ParseResult {
   steps: Step[]
   error: { line: number; message: string } | null
+  ngc: boolean // only the firmware checks and runs it: no preview
 }
 
-function parseGcode(text: string, flavorId: string): ParseResult {
-  const flavor = find(flavorId)
-  if (!flavor) {
-return { steps: [], error: { line: 0, message: "unknown flavor" } }
+function parseGcode(text: string, dialectId: string): ParseResult {
+  const dialect = find(dialectId)
+  if (!dialect) {
+return { steps: [], error: { line: 0, message: "unknown dialect" }, ngc: false }
 }
-  flavor.begin(0, 0)
+  if (dialectId === ROUTINE_DIALECT || usesNgc(text)) {
+    return { steps: [], error: null, ngc: true }
+  }
+  const interp = new Interpreter()
+  dialect.begin(interp, 0, 0)
   const steps: Step[] = []
   const sink: StepSink = { emit: (s) => steps.push(s) }
   const lines = text.split("\n")
   for (let i = 0; i < lines.length; i++) {
-    const err = interpretLine(flavor, lines[i], i + 1, sink)
+    const err = interpretLine(dialect, interp, lines[i], i + 1, sink)
     if (err) {
-return { steps, error: { line: i + 1, message: err } }
+return { steps, error: { line: i + 1, message: err }, ngc: false }
 }
   }
-  return { steps, error: null }
+  return { steps, error: null, ngc: false }
 }
 
 function stripExtension(filename: string): string {
@@ -74,15 +80,15 @@ export function GcodeScreen() {
   const [pasteText, setPasteText] = useState("")
   const [name, setName] = useState("")
   const [nameTouched, setNameTouched] = useState(false)
-  const [flavorId, setFlavorId] = useState(() => list()[0]?.id() ?? "")
-  const [flavorTouched, setFlavorTouched] = useState(false)
+  const [dialectId, setDialectId] = useState(() => list()[0]?.id() ?? "")
+  const [dialectTouched, setDialectTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [listResult, setListResult] = useState<GcodeListResult | null>(null)
   const [loading, setLoading] = useState(false)
   // Text of the saved program open in the form, to tell whether it was edited.
   const [savedText, setSavedText] = useState<string | null>(null)
   const [savedName, setSavedName] = useState<string | null>(null)
-  const [savedFlavor, setSavedFlavor] = useState<string | null>(null)
+  const [savedDialect, setSavedDialect] = useState<string | null>(null)
   const [openedId, setOpenedId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -91,25 +97,25 @@ export function GcodeScreen() {
   const { path, navigate } = useRouter()
 
   const text = sourceMode === "file" ? fileText : pasteText
-  const parsed = useMemo(() => parseGcode(text, flavorId), [text, flavorId])
-  const extents = useMemo(() => (parsed.error ? null : computeMapping(parsed.steps)), [parsed])
+  const parsed = useMemo(() => parseGcode(text, dialectId), [text, dialectId])
+  const extents = useMemo(() => (parsed.error || parsed.ngc ? null : computeMapping(parsed.steps)), [parsed])
   const axesHeader = useMemo(() => parseAxesHeader(text), [text])
   const axesWrong = !!axesHeader && axesMismatched(axesHeader)
 
-  function openProgram(programText: string, programName: string, programFlavorId: string, savedId: string | null) {
+  function openProgram(programText: string, programName: string, programDialectId: string, savedId: string | null) {
     setSourceMode("paste")
     setFile(null)
     setFileText("")
     setPasteText(programText)
     setName(programName)
     setNameTouched(true)
-    setFlavorId(programFlavorId)
-    setFlavorTouched(true)
+    setDialectId(programDialectId)
+    setDialectTouched(true)
     setSavedText(programText)
     setSavedName(programName)
-    setSavedFlavor(programFlavorId)
+    setSavedDialect(programDialectId)
     setOpenedId(savedId)
-    renderPreview(programText, programFlavorId)
+    renderPreview(programText, programDialectId)
   }
 
   async function load(openActive = false): Promise<GcodeListResult | null> {
@@ -120,7 +126,7 @@ export function GcodeScreen() {
       if (openActive && r.active?.id) {
         const activeText = await fetchGcodeActiveText()
         if (activeText !== null) {
-openProgram(activeText, r.active.name, r.active.flavor, r.active.id)
+openProgram(activeText, r.active.name, r.active.dialect, r.active.id)
 }
       }
       return r
@@ -153,10 +159,10 @@ load(true)
         setPasteText("")
         setName(timestampName())
         setNameTouched(false)
-        setFlavorTouched(false)
+        setDialectTouched(false)
         setSavedText(null)
         setSavedName(null)
-        setSavedFlavor(null)
+        setSavedDialect(null)
         setOpenedId(null)
       }
       return
@@ -173,7 +179,7 @@ return
 setListResult(listRes)
 }
         const info = listRes.programs.find((p) => p.id === id)
-        openProgram(programText, info?.name ?? "", info?.flavor ?? flavorId, id)
+        openProgram(programText, info?.name ?? "", info?.dialect ?? dialectId, id)
       } catch (e) {
         toast.push(`Could not open: ${(e as Error).message}`, "bad")
       } finally {
@@ -184,14 +190,14 @@ setListResult(listRes)
   }, [path])
 
   useEffect(() => {
-    if (!text || flavorTouched) {
+    if (!text || dialectTouched) {
 return
 }
-    const detected = detectFlavor(text)
+    const detected = detectDialect(text)
     if (detected) {
-setFlavorId(detected)
+setDialectId(detected)
 }
-  }, [text, flavorTouched])
+  }, [text, dialectTouched])
 
   useEffect(() => {
     if (nameTouched) {
@@ -206,11 +212,11 @@ setName(timestampName())
 
   useEffect(() => {
     if (text) {
-renderPreview(text, flavorId)
+renderPreview(text, dialectId)
 }
-  }, [text, flavorId])
+  }, [text, dialectId])
 
-  function renderPreview(sourceText: string, forFlavorId: string) {
+  function renderPreview(sourceText: string, forDialectId: string) {
     const canvas = canvasRef.current
     if (!canvas) {
 return
@@ -219,8 +225,8 @@ return
     if (!ctx) {
 return
 }
-    const { steps } = parseGcode(sourceText, forFlavorId)
-    drawPreview(ctx, forFlavorId === "lathecode" ? markLathecodeTravel(sourceText, steps) : steps)
+    const { steps } = parseGcode(sourceText, forDialectId)
+    drawPreview(ctx, forDialectId === "lathecode" ? markLathecodeTravel(sourceText, steps) : steps)
   }
 
   async function sendPreviewToDisplay() {
@@ -276,10 +282,10 @@ return
         openedId !== null
           ? await updateGcode(openedId, {
               name: trimmedName !== savedName ? trimmedName : undefined,
-              flavor: flavorId !== savedFlavor ? flavorId : undefined,
+              dialect: dialectId !== savedDialect ? dialectId : undefined,
               text: text !== savedText ? text : undefined,
             })
-          : await uploadGcode(text, trimmedName, flavorId, "save")
+          : await uploadGcode(text, trimmedName, dialectId, "save")
       if (!result.ok) {
         toast.push(`Save rejected: ${result.error}`, "bad")
         return
@@ -287,7 +293,7 @@ return
       toast.push("Saved.", "good")
       setSavedText(text)
       setSavedName(trimmedName)
-      setSavedFlavor(flavorId)
+      setSavedDialect(dialectId)
       setName(trimmedName)
       setOpenedId(result.id)
       if (result.id) {
@@ -311,12 +317,12 @@ return
       const unchangedSaved = openedId !== null && !changed
       const result = unchangedSaved
         ? await selectGcode(openedId)
-        : await uploadGcode(text, name.trim(), flavorId, "run")
+        : await uploadGcode(text, name.trim(), dialectId, "run")
       if (!result.ok) {
         toast.push(`Rejected: ${result.error}`, "bad")
         return
       }
-      renderPreview(text, flavorId)
+      renderPreview(text, dialectId)
       await sendPreviewToDisplay()
       const outcome = await sendCommand(cmd.mode("gcode"))
       if (outcome.status === "denied") {
@@ -336,7 +342,7 @@ toast.push("Loaded on the lathe.", "good")
     setBusy(true)
     try {
       const programText = await fetchGcodeProgramText(p.id)
-      openProgram(programText, p.name, p.flavor, p.id)
+      openProgram(programText, p.name, p.dialect, p.id)
       navigate(`${ROUTE}/${encodeURIComponent(p.id)}`)
     } catch (e) {
       toast.push(`Could not open: ${(e as Error).message}`, "bad")
@@ -368,11 +374,34 @@ navigate(ROUTE)
   }
 
   const openedProgram = listResult?.programs.find((p) => p.id === openedId) ?? null
-  const showFlavor = list().length > 1
-  const valid = !!text && !parsed.error && !!name.trim() && !!flavorId
-  const changed = text !== savedText || name.trim() !== savedName || flavorId !== savedFlavor
+  const showDialect = list().length > 1
+  const valid = !!text && !parsed.error && !!name.trim() && !!dialectId
+  const changed = text !== savedText || name.trim() !== savedName || dialectId !== savedDialect
   const canSave = canConfigure && !busy && valid && !axesWrong && (openedId === null || changed)
-  const canRun = canConfigure && !busy && valid && !axesWrong
+  const canRun = canConfigure && !busy && valid && !axesWrong && dialectId !== ROUTINE_DIALECT
+  const programs = listResult?.programs.filter((p) => p.dialect !== ROUTINE_DIALECT) ?? []
+  const routines = listResult?.programs.filter((p) => p.dialect === ROUTINE_DIALECT) ?? []
+
+  function programButton(p: GcodeProgramInfo) {
+    return (
+      <button
+        key={p.id}
+        type="button"
+        disabled={busy}
+        onClick={() => openSaved(p)}
+        className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-60 ${
+          p.id === openedId ? "bg-muted font-medium" : ""
+        }`}
+      >
+        <span className="flex-1 truncate">{p.name}</span>
+        {listResult?.active?.id === p.id && (
+          <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-500 dark:text-emerald-400">
+            active
+          </span>
+        )}
+      </button>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -391,31 +420,27 @@ navigate(ROUTE)
       {!canConfigure && <LockNotice>{CONFIGURE_LOCK_MESSAGE}</LockNotice>}
 
       <div className="grid items-start gap-4 lg:grid-cols-[16rem_1fr]">
-        <Panel title="Saved programs">
+        <Panel title="Saved">
           {loading && !listResult ? (
             <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : !listResult || listResult.programs.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No saved programs.</p>
           ) : (
-            <div className="-mx-2 flex flex-col">
-              {listResult.programs.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => openSaved(p)}
-                  className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-60 ${
-                    p.id === openedId ? "bg-muted font-medium" : ""
-                  }`}
-                >
-                  <span className="flex-1 truncate">{p.name}</span>
-                  {listResult.active?.id === p.id && (
-                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-500 dark:text-emerald-400">
-                      active
-                    </span>
-                  )}
-                </button>
-              ))}
+            <div className="flex flex-col gap-3">
+              <div>
+                <h3 className="mb-1 text-xs font-medium uppercase text-muted-foreground">Programs</h3>
+                {programs.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">None saved.</p>
+                ) : (
+                  <div className="-mx-2 flex flex-col">{programs.map(programButton)}</div>
+                )}
+              </div>
+              <div>
+                <h3 className="mb-1 text-xs font-medium uppercase text-muted-foreground">NGC routines</h3>
+                {routines.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">None saved.</p>
+                ) : (
+                  <div className="-mx-2 flex flex-col">{routines.map(programButton)}</div>
+                )}
+              </div>
             </div>
           )}
           {listResult && (
@@ -458,7 +483,7 @@ navigate(ROUTE)
               )}
 
               <div className="grid gap-3 sm:grid-cols-3">
-                <div className={showFlavor ? "sm:col-span-2" : "sm:col-span-3"}>
+                <div className={showDialect ? "sm:col-span-2" : "sm:col-span-3"}>
                   <Field label="Name">
                     <TextInput
                       value={name}
@@ -470,13 +495,13 @@ navigate(ROUTE)
                     />
                   </Field>
                 </div>
-                {showFlavor && (
-                  <Field label="Flavor">
+                {showDialect && (
+                  <Field label="Dialect">
                     <Select
-                      value={flavorId}
+                      value={dialectId}
                       onChange={(e) => {
-                        setFlavorId(e.target.value)
-                        setFlavorTouched(true)
+                        setDialectId(e.target.value)
+                        setDialectTouched(true)
                       }}
                     >
                       {list().map((f) => (
@@ -503,7 +528,13 @@ navigate(ROUTE)
               )}
 
               {text &&
-                (parsed.error ? (
+                (parsed.ngc ? (
+                  <p className="text-sm text-muted-foreground">
+                    {dialectId === ROUTINE_DIALECT
+                      ? "NGC routine: called by name, checked by the lathe on save."
+                      : "NGC program: checked by the lathe on save or run. No preview."}
+                  </p>
+                ) : parsed.error ? (
                   <p className="text-sm text-destructive">
                     Line {parsed.error.line}: {parsed.error.message}
                   </p>
@@ -536,7 +567,7 @@ navigate(ROUTE)
           </Panel>
 
           {/* Kept mounted so the canvas can be drawn before it is shown. */}
-          <Panel title="Preview" className={text ? "" : "hidden"}>
+          <Panel title="Preview" className={text && !parsed.ngc ? "" : "hidden"}>
             <canvas
               ref={canvasRef}
               width={CANVAS_W}

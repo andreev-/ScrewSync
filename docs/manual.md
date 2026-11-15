@@ -72,7 +72,7 @@ How to operate ScrewSync. For connectors and flashing, see
 - Multi-pass modes show the phase and the pass number. SKIP goes to the
   next pass.
 - During a job, the feed override changes all feeds of the job, but not
-  rapids. Thread and Probe have no override. Each start resets it to 100%.
+  rapids. Thread has no override. Each start resets it to 100%.
 - STOP ends the job with a controlled stop.
 
 ## Modes
@@ -116,8 +116,9 @@ How to operate ScrewSync. For connectors and flashing, see
 
 ### Thread alignment
 
-- Thread mode, G32 and Gear follow the spindle angle zero and the axis
-  zero. Thus a rerun cuts in the same groove: stop, measure, run again.
+- Thread mode, G-code threading and Gear follow the spindle angle zero
+  and the axis zero. Thus a rerun cuts in the same groove: stop, measure,
+  run again.
 - If you re-zero the angle or the axis, or reboot, the next cut starts a
   new helix.
 - At start, Gear holds the axis for up to one spindle turn, until the
@@ -132,26 +133,55 @@ How to operate ScrewSync. For connectors and flashing, see
 ## G-code
 
 - Load programs on the web client. Start them on the display.
+- Dialects: LatheCode, LinuxCNC and NGC routines. The web client finds
+  LatheCode by its header and a routine by its `o<name> sub`, and takes
+  any other text as LinuxCNC. You can change it.
 - Program zero is the tool zero: X0 on the centerline (X is radius), Z0
   where the program expects it (LatheCode: the right edge of the stock).
 - If the tool is not at zero, START asks you to confirm. The first move
   starts from the current tool position.
 - Generate LatheCode programs with `AXES RIGHT DOWN`. The web client
   refuses other directions and offers to flip the axes.
-- G1 feed is per minute along the path. G32 is synchronized to the
-  spindle. The feed override applies to G1 and G32, not to G0.
+- G1 feed is per minute along the path. G33 (LatheCode: G32) is
+  synchronized to the spindle; K is the lead. The feed override applies to
+  G1 only.
+- `G10 L20 P1 Z… X…` makes the current position read the given values.
 - Motion pauses while the spindle is stopped and continues when it turns.
 - M0/M1 pause until START. M2/M30 or STOP end the program.
+- LinuxCNC programs can use NGC parameters, expressions, O-words and
+  routine calls ([protocol.md](protocol.md), "NGC"). The web client shows
+  no preview for them, and the step count is unknown when it depends on
+  a probe result or a routine.
+
+### Routines
+
+- Save a program with the NGC dialect. Its name is its call:
+  `probe` is `o<probe> call`. It must define `o<probe> sub` ...
+  `o<probe> endsub`.
+- The web client lists routines apart from programs. A routine can not be
+  run as a program.
+
+### MDI
+
+- On the web client MDI tab or the serial console, type G-code lines
+  (LinuxCNC), e.g. `G91 G0 Z-1`.
+  The modes (G90/G91, G20/G21, F) stay between lines. STOP or `stop`
+  stops the move and drops the queued lines.
+- `G10 L20 P1 Z0` sets Z zero at the tool. `M100 X0` turns the X motor
+  off, `M100 X1` on. `M110` sets the spindle angle to 0.
 
 ## Probe
 
 - With a contact plate, the tool must be earthed (usually through the
   machine frame). Before you probe, touch the plate to the tool: the
   contact light must turn green.
+- Set the probe distance and offset on the Probe panel or in the web
+  settings. The cycle is a routine you can replace; see
+  [probe.md](probe.md).
 
 ## Stops
 
 - A job also stops if you disable one of its axes, or if the display link
   is lost.
-- Each axis has a travel clamp around zero (`maxTravelMm`). The axis does
-  not move past it.
+- Each axis has a travel clamp around its power-on position
+  (`maxTravelMm`). The axis does not move past it.

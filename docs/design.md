@@ -110,7 +110,7 @@ User side: [pins.md](pins.md).
   is the one command let through while tripped; it clears the NVS flag and
   reboots into a normal boot.
 - `Stepper::moveTo()` -- the one choke point every mover (`Jog`, modes, the
-  `move` command) already goes through -- refuses any new target while
+  G-code step runner) already goes through -- refuses any new target while
   `Flashing`/`EStop`, pinning it to the current position instead. This is
   what actually stops a hand-cranked handwheel: `Jog` has no on/off switch,
   so rejecting commands alone doesn't stop its poll loop from calling
@@ -140,9 +140,14 @@ User side: [pins.md](pins.md).
 - One runner thread reads the spindle once per tick and ticks the running
   mode under the mode lock; every mode-driven move goes through
   `Stepper::moveTo()` with a speed cap (synced and rapid moves use the
-  axis's manual move speed).
+  axis's rapid speed).
 - A running mode owns the axes it drives. Any jog on an owned axis
   (handwheel, display button, `jog` command) stops the mode, then moves.
+- MDI lines run on the G-code step runner when no mode runs, and own both
+  axes while they move.
+- Positions are in du. `Machine::position()` is the machine coordinate,
+  from the stepper count. `Wcs` holds the work offset (G54, RAM only);
+  zeroing and the probe set it. The travel clamp is in machine coordinates.
 - Geometry is relative to the engage point; there are no global stops.
   Directions follow the display jog arrows: -X toward the centerline, -Z
   toward the chuck. Spindle counts increase in forward rotation. Pitches
@@ -153,11 +158,31 @@ User side: [pins.md](pins.md).
 - Turn, thread and slot share a pass engine (`ModePass`): plunge, cut,
   retract, return to start approaching in the cut direction (backlash taken
   up before the cut).
-- Thread mode, G32 and Gear share one helix per pitch: through axis 0 at
+- Thread mode, G-code threading (G33) and Gear share one helix per pitch: through axis 0 at
   spindle angle 0, offset per start. Passes and reruns land in the same
   groove; Gear holds the axis until the spindle reaches that phase.
 - A target the travel clamp cuts short, or a disabled axis, ends the job
   with an error.
+
+## G-code
+
+- `main/lib/Gcode` has no Zephyr dependency and no heap. A `Dialect`
+  (`lathecode`, `linuxcnc`, `ngc`) turns its lines into standard
+  (LinuxCNC) words. `Interpreter` turns the words into `Step`s.
+- `Program` runs a program at execution time: it reads a line only after
+  the steps before it are done, so a G38 result is known to the next
+  line. It also runs the O-word flow and the routine calls. `GcodeNgc`
+  parses the parameters and expressions.
+- `Mdi` keeps the modal state between MDI lines. A `@` line runs on a
+  fresh interpreter at the session position.
+- `ModeSteps` is the one step runner for programs, MDI and routines. It
+  drives Z and X together: the axis with the larger delta moves at the
+  computed speed, the other follows its progress. The probe interrupt
+  halts a G38 move with no decel. Step targets are work coordinates.
+- NGC parameters are shared by MDI and jobs and kept until reboot.
+- `GcodeStore` holds the saved programs and routines. A saved routine
+  replaces the built-in one (`main/lib/GcodeStore/routines/`) with the
+  same label.
 
 ## Thread table
 

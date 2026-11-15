@@ -17,7 +17,9 @@
  */
 #include "Command.hpp"
 #include "CommandInternal.hpp"
+#include "GcodeMdi.hpp"
 #include "Machine.hpp"
+#include "Mode.hpp"
 #include "Motion.hpp"
 #include "Pins.hpp"
 #include <zephyr/sys/reboot.h>
@@ -68,7 +70,6 @@ namespace
         {"settings", "settings get | set <field> <value> | set-all <json> | reset", "machine config storage", settings},
         {"jog", "jog step [<deci-microns>|next] | z|x +|- [hold|release] | resolution <multiplier> | speed <steps/sec|0> | status",
          "jog buttons (tap = one step, repeated hold = continuous, release = stop), handwheel resolution/speed", jog},
-        {"move", "move z|x to|by <deci-microns> [<du/min>] | stop | zero", "manual positioning; zero = rapid Z then X to 0", move},
         {"mode", "mode [<name>|status]", "selects the operating mode (refused while running)", mode},
         {"start", "start [zero]", "starts the selected mode; zero = rapid Z then X to 0 first", start},
         {"stop", "stop", "stops the mode and decelerates both axes", stop},
@@ -93,10 +94,7 @@ namespace
         {"ellipse",
          "ellipse [status] | pitch <du> | dir -|+ | length <du> | depth <du> | passes <n> | concave on|off",
          "half-ellipse mode (dir picks the Z side)", ellipse},
-        {"probe", "probe go z-|z+|x-|x+ | [status] | probe-dst <du> | offset <du>",
-         "touch-off mode: starts a cycle on an axis, and its params/status", probe},
-        {"cal", "cal count | status | backlash z|x -|+ [runs] | stop",
-         "calibration: raw spindle count, backlash measurement with the probe", cal},
+        {"cal", "cal count", "calibration: raw spindle count", cal},
         {"info", "info", "firmware version, target, reset cause, uptime, OTA image confirmed", info},
 #ifdef CONFIG_SCREWSYNC_DISPLAY_IMAGE
         {"display", "display status | info | flash",
@@ -108,9 +106,7 @@ namespace
          pins},
         {"units", "units [mm|inch]", "display units", units},
         {"ws", "ws list | kill <n>", "web UI WebSocket clients: numbered list / closes one", ws},
-        {"zero", "zero z|x [<deci-microns>] | spindle",
-         "sets the current position to 0 or the given value / current angle to 0 deg", zero},
-        {"enable", "enable z|x on|off|status", "manual per-axis motor enable/disable switch", enable},
+        {"o<name>", "o<name> call [<arg>]...", "runs a routine as a G-code job (args: [expressions])", nullptr},
         {"commands", "commands", "list the command set", commands},
     };
 
@@ -164,12 +160,6 @@ namespace Command::Detail
         if (tokLen == 5 && !strncmp(token, "start", 5)) {
             return true;
         }
-        if (tokLen == 4 && !strncmp(token, "move", 4)) {
-            return strcmp(args, "stop") != 0;
-        }
-        if (tokLen == 3 && !strncmp(token, "cal", 3)) {
-            return !strncmp(args, "backlash", 8);
-        }
         if (tokLen == 3 && !strncmp(token, "jog", 3)) {
             return (args[0] == 'z' || args[0] == 'x') && args[1] == ' ';
         }
@@ -209,13 +199,33 @@ namespace Command
         }
 
         const char *pinsFault = Pins::fault();
+        bool ui = *a == Gcode::MDI_UI_MARKER;
+        const char *gcode = ui ? a + 1 : a;
+        if (Gcode::isMdiLine(gcode)) {
+            const char *refusal = pinsFault ? pinsFault : Mode::mdi(gcode, ui);
+            if (refusal) {
+                snprintf(out, outMax, "err %s%s", pinsFault ? "pins: " : "", refusal);
+            } else {
+                snprintf(out, outMax, "ok");
+            }
+            return;
+        }
+        if ((*a == 'o' || *a == 'O') && a[1] == '<') {
+            const char *refusal = pinsFault ? pinsFault : Mode::call(a);
+            if (refusal) {
+                snprintf(out, outMax, "err %s%s", pinsFault ? "pins: " : "", refusal);
+            } else {
+                snprintf(out, outMax, "ok");
+            }
+            return;
+        }
         if (pinsFault && startsMotion(a, tokLen, a + tokLen)) {
             snprintf(out, outMax, "err pins: %s", pinsFault);
             return;
         }
 
         for (const CommandDef &c : COMMANDS) {
-            if (strlen(c.token) == tokLen && !strncmp(a, c.token, tokLen)) {
+            if (c.handler && strlen(c.token) == tokLen && !strncmp(a, c.token, tokLen)) {
                 c.handler(a + tokLen, out, outMax);
                 return;
             }

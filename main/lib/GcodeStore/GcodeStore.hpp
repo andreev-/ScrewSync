@@ -25,10 +25,12 @@
 // Saved G-code programs on the "gcode" LittleFS partition, plus the one
 // active program (PSRAM buffer) that execution and selection both read
 // from. The partition is mounted lazily, on first use, never at boot.
+// Programs of Gcode::ROUTINE_DIALECT are routines: each defines
+// o<its name> sub, names are unique, and they are called, never active.
 namespace GcodeStore
 {
     constexpr size_t PROGRAM_MAX = 512 * 1024;
-    constexpr size_t FLAVOR_MAX_LEN = 15;
+    constexpr size_t DIALECT_MAX_LEN = 15;
     constexpr size_t ID_LEN = 8; // hex digits, excluding the NUL
     constexpr size_t LIST_MAX = 64;
 
@@ -36,7 +38,7 @@ namespace GcodeStore
     {
         char id[ID_LEN + 1];
         char name[GcodeMeta::NAME_MAX_LEN + 1];
-        char flavor[FLAVOR_MAX_LEN + 1];
+        char dialect[DIALECT_MAX_LEN + 1];
         size_t size; // program text, excluding the header line
     };
 
@@ -53,6 +55,7 @@ namespace GcodeStore
         const char *error;
         uint32_t line; // 1-based, 0 if not tied to a line
         uint32_t steps;
+        bool stepsKnown;
         char savedId[ID_LEN + 1]; // empty if not saved
     };
 
@@ -60,9 +63,10 @@ namespace GcodeStore
     {
         bool present;
         char name[GcodeMeta::NAME_MAX_LEN + 1];
-        char flavor[FLAVOR_MAX_LEN + 1];
+        char dialect[DIALECT_MAX_LEN + 1];
         size_t size;
         uint32_t steps;
+        bool stepsKnown;
         char savedId[ID_LEN + 1]; // empty if not saved
         uint32_t version;
     };
@@ -71,21 +75,21 @@ namespace GcodeStore
     // free space. False if the partition can't be mounted.
     bool list(ListResult &out);
 
-    // Validates text against flavor, then saves it as a new file and/or
+    // Validates text against dialect, then saves it as a new file and/or
     // makes it active. Activating is refused while a Gcode job is running.
-    Result upload(const char *text, size_t len, const char *name, size_t nameLen, const char *flavor, bool save,
+    Result upload(const char *text, size_t len, const char *name, size_t nameLen, const char *dialect, bool save,
                   bool activate);
 
-    // Overwrites a saved program in place. An empty name, empty flavor or
+    // Overwrites a saved program in place. An empty name, empty dialect or
     // zero-length text leaves that field as it was. Refused if it's the
     // active program and a Gcode job is running.
-    Result update(const char *id, const char *name, size_t nameLen, const char *flavor, const char *text, size_t len);
+    Result update(const char *id, const char *name, size_t nameLen, const char *dialect, const char *text, size_t len);
 
-    // Encoded body: "<flavor>\t<name>\n" (the saved-file header line), then the program.
+    // Encoded body: "<dialect>\t<name>\n" (the saved-file header line), then the program.
     Result uploadEncoded(const char *body, size_t len, bool save, bool activate);
-    // An empty flavor, empty name or missing program leaves that field.
+    // An empty dialect, empty name or missing program leaves that field.
     Result updateEncoded(const char *id, const char *body, size_t len);
-    constexpr size_t ENCODED_MAX = PROGRAM_MAX + GcodeMeta::NAME_MAX_LEN + FLAVOR_MAX_LEN + 2;
+    constexpr size_t ENCODED_MAX = PROGRAM_MAX + GcodeMeta::NAME_MAX_LEN + DIALECT_MAX_LEN + 2;
 
     // A saved program's text, without making it active. Valid until the
     // next read or select. nullptr on success, else the reason.
@@ -105,6 +109,12 @@ namespace GcodeStore
 
     // The active program's text and length; nullptr/0 if none.
     const char *activeText(size_t &len);
+
+    // A routine by O-word label: the saved one, else the built-in one.
+    // Loaded once per job; valid until resetRoutines(). nullptr if none.
+    const char *routine(const char *label, size_t &len);
+    // At the start of each job.
+    void resetRoutines();
 }
 
 #endif
