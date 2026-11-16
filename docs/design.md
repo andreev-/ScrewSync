@@ -95,20 +95,27 @@ User side: [pins.md](pins.md).
   `Machine::setModeEngaged(Axis, bool)` (from `Mode`, one flag per axis it
   drives), and `Machine::setFlashing(bool)` (from `Ota`). `Jog` has no
   engage/disengage of its own, so it has no setter to call.
-- `state()` derives on read: `EStop` (sticky, see below) > `Flashing` if the
-  flashing flag is set > `Running` if spinning or either axis's mode flag is
-  set > else `Idle`.
-- `setFlashing(true)` while spinning or mode-engaged trips `EStop` instead of
-  entering `Flashing` -- OTA must never start while the machine is doing
-  something. Tripping it de-energizes both axis drivers (`Stepper::setEnabled`),
-  writes an EStop flag to NVS, and reboots immediately. On the next boot,
-  `Machine::begin()` reads that flag before anything else starts; the rest of
-  main still initializes normally (skipping it risks other code touching an
-  uninitialized subsystem), but `Command::apply()` and `Stepper::moveTo()`
-  (see below) refuse everything while `state()` is `EStop`, so nothing can
-  actually move or be commanded regardless of what's running. `estop ack`
-  is the one command let through while tripped; it clears the NVS flag and
-  reboots into a normal boot.
+- `state()` derives on read: `Flashing` if the flashing flag is set >
+  `EStop` (sticky, see below) > `Running` if spinning or either axis's mode
+  flag is set > else `Idle`.
+- The machine boots in `EStop`. The flag is not saved. Then
+  `Machine::applyBootState()` applies `bootState`, only after a power-on
+  or pin reset (`hwinfo_get_reset_cause()`), through `estopOff()` and the
+  `power on` path.
+- `Machine::estopNow()` is the one estop entry. It is ISR-safe: it halts
+  both axes at once, then a work item sets `EStop`, stops all motion
+  (`Mode::stop()`, which also clears the MDI queue) and disables both axes
+  (`Stepper::setDisabled`). It does not reboot. `estop on`, the home and
+  estop inputs and `setFlashing(true)` while spinning or mode-engaged call
+  it -- OTA must never start while the machine is doing something.
+- `estop off` calls `Machine::estopOff()`. It is refused while an estop
+  input is active. It clears `EStop`, does not
+  reboot and does not enable the motors. The axis disabled state is not
+  saved, so both axes are disabled at boot. `RunSettings::setAxisDisabled`
+  refuses to enable an axis in `EStop`.
+- In `EStop`, `Command::apply()` refuses `start`, `jog`, MDI lines and
+  `o<...>` calls. Everything else runs: status, settings, pins, Wi-Fi,
+  units, mode select and parameters, threads, G-code files, OTA.
 - `Stepper::moveTo()` -- the one choke point every mover (`Jog`, modes, the
   G-code step runner) already goes through -- refuses any new target while
   `Flashing`/`EStop`, pinning it to the current position instead. This is
@@ -117,19 +124,18 @@ User side: [pins.md](pins.md).
   `moveTo()`; gating `moveTo()` itself does.
 - Guards reading `Machine::state()`/`Machine::blocksTraffic()`:
   - `Command::apply()` rejects every command, any transport (console,
-    WebSocket, display UART), while state is `Flashing` or `EStop` (except
-    `estop ack`).
+    WebSocket, display UART), while state is `Flashing`. In `EStop` it
+    rejects only the commands listed above.
   - Each WebUi HTTP resource (`/`, `/wifi`, `/ws`, `/update`,
-    `/update-display`) rejects new requests with 503 while `Flashing`/
-    `EStop`. `/update` and `/update-display` additionally track which
+    `/update-display`) rejects new requests with 503 while `Flashing`.
+    `/update` and `/update-display` additionally track which
     client owns the in-flight transfer and reject any other client's
     request with 409 while one is running. Starting either transfer closes
     every open WebSocket in `WsCommand`'s client table and refuses new `/ws`
-    upgrades until back to `Idle`.
+    upgrades until `Flashing` ends.
   - Display: firmware mirrors `state` to it; it shows a blocking toast
-    while `Flashing` or the link is lost, and an ack toast while `EStop`
-    (`docs/screen.md`). A main-controller reboot
-    re-inits the UART link, so display resyncs on reconnect.
+    while `Flashing` or the link is lost, and the estop cover while
+    `EStop` (`docs/screen.md`).
 
 ## Modes
 
@@ -141,13 +147,23 @@ User side: [pins.md](pins.md).
   mode under the mode lock; every mode-driven move goes through
   `Stepper::moveTo()` with a speed cap (synced and rapid moves use the
   axis's rapid speed).
+- A feature (X motor, homing, probe) is available when its settings switch
+  is on and its function is in the active pin map. `Pins::unavailable`,
+  `Stepper::unavailable` and `Mode::unavailable` give the refusal text.
+  `Pins` removes the functions of a switch that is off from the active map
+  at load, and `Settings` removes them from the saved map on save. The G-code
+  runner scans a program or routine call before the first move and checks
+  each move again before it starts. `Status` reports an unavailable axis as
+  not enabled.
 - A running mode owns the axes it drives. Any jog on an owned axis
   (handwheel, display button, `jog` command) stops the mode, then moves.
 - MDI lines run on the G-code step runner when no mode runs, and own both
   axes while they move.
 - Positions are in du. `Machine::position()` is the machine coordinate,
-  from the stepper count. `Wcs` holds the work offset (G54, RAM only);
-  zeroing and the probe set it. The travel clamp is in machine coordinates.
+  from the stepper count. `Wcs` holds the work offsets (G54–G59, saved
+  only with home switches); zeroing and the probe set the active one. A homed axis has a travel window in
+  stepper steps: the upper limit at the home position, the lower limit
+  `maxTravelMm` below it. `Homing` sets and clears it with the homed state.
 - Geometry is relative to the engage point; there are no global stops.
   Directions follow the display jog arrows: -X toward the centerline, -Z
   toward the chuck. Spindle counts increase in forward rotation. Pitches

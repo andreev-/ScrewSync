@@ -17,6 +17,8 @@
  */
 #include "SettingsFields.hpp"
 
+#include <initializer_list>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,8 +26,29 @@
 
 namespace
 {
+    using Settings::Axis;
     using Settings::Field;
     using Settings::FieldType;
+
+    constexpr double SECONDS_PER_MIN = 60.0;
+    constexpr int32_t MAX_SPEED_STEPS = 1000000;
+    constexpr int32_t MAX_ACCEL_STEPS = 100000000;
+
+    const Axis &axisOf(const Field &field, const Settings::Conf &conf)
+    {
+        return field.offset >= offsetof(Settings::Conf, x) ? conf.x : conf.z;
+    }
+
+    bool isSpeed(const Field &field)
+    {
+        return strstr(field.name, "DuPerMin") != nullptr;
+    }
+
+    int32_t stepsPerSec(double du, const Axis &axis, int32_t maxSteps)
+    {
+        int64_t steps = llround(du * axis.motorSteps / axis.screwPitchDu);
+        return (int32_t)CLAMP(steps, 1, maxSteps);
+    }
 
     bool parseBool(const char *s, bool &out)
     {
@@ -75,12 +98,17 @@ namespace Settings
         {"probeBackOffDu", FieldType::I32, offsetof(Conf, probeBackOffDu), 1, 10000000},
         {"probeDstDu", FieldType::I32, offsetof(Conf, probeDstDu), 0, 10000000},
         {"probeOffsetDu", FieldType::I32, offsetof(Conf, probeOffsetDu), 0, 10000000},
+        {"requireHoming", FieldType::Bool, offsetof(Conf, requireHoming), 0, 0},
+        {"bootState", FieldType::I32, offsetof(Conf, bootState), 0, 2},
+        {"xMotorEnabled", FieldType::Bool, offsetof(Conf, xMotorEnabled), 0, 0},
+        {"homingEnabled", FieldType::Bool, offsetof(Conf, homingEnabled), 0, 0},
+        {"probeEnabled", FieldType::Bool, offsetof(Conf, probeEnabled), 0, 0},
         {"screwPitchDuZ", FieldType::I32, offsetof(Conf, z.screwPitchDu), 1, 10000000},
         {"motorStepsZ", FieldType::I32, offsetof(Conf, z.motorSteps), 1, 1000000},
-        {"speedStartZ", FieldType::I32, offsetof(Conf, z.speedStart), 1, 1000000},
-        {"accelerationZ", FieldType::I32, offsetof(Conf, z.acceleration), 1, 100000000},
-        {"decelerationZ", FieldType::I32, offsetof(Conf, z.deceleration), 1, 100000000},
-        {"speedRapidZ", FieldType::I32, offsetof(Conf, z.speedRapid), 1, 1000000},
+        {"speedStartDuPerMinZ", FieldType::I32, offsetof(Conf, z.speedStartDuPerMin), 1, 60000000},
+        {"accelerationDuPerSec2Z", FieldType::I32, offsetof(Conf, z.accelerationDuPerSec2), 1, 100000000},
+        {"decelerationDuPerSec2Z", FieldType::I32, offsetof(Conf, z.decelerationDuPerSec2), 1, 100000000},
+        {"speedRapidDuPerMinZ", FieldType::I32, offsetof(Conf, z.speedRapidDuPerMin), 1, 60000000},
         {"invertDirectionZ", FieldType::Bool, offsetof(Conf, z.invertDirection), 0, 0},
         {"invertEnableZ", FieldType::Bool, offsetof(Conf, z.invertEnable), 0, 0},
         {"maxTravelMmZ", FieldType::I32, offsetof(Conf, z.maxTravelMm), 1, 10000},
@@ -88,12 +116,18 @@ namespace Settings
         {"handwheelPprZ", FieldType::Float, offsetof(Conf, z.handwheelPpr), 1, 100000},
         {"invertHandwheelZ", FieldType::Bool, offsetof(Conf, z.invertHandwheel), 0, 0},
         {"handwheelLagMsZ", FieldType::I32, offsetof(Conf, z.handwheelLagMs), 1, 1000},
+        {"handwheelTravelDuZ", FieldType::I32, offsetof(Conf, z.handwheelTravelDu), 1, 10000000},
+        {"homeFastDuPerMinZ", FieldType::I32, offsetof(Conf, z.homeFastDuPerMin), 0, 60000000},
+        {"homeSlowDuPerMinZ", FieldType::I32, offsetof(Conf, z.homeSlowDuPerMin), 0, 60000000},
+        {"homeLatchBackOffDuZ", FieldType::I32, offsetof(Conf, z.homeLatchBackOffDu), 10000, 10000000},
+        {"homePullOffDuZ", FieldType::I32, offsetof(Conf, z.homePullOffDu), 0, 10000000},
+        {"homePositionDuZ", FieldType::I32, offsetof(Conf, z.homePositionDu), -10000000, 10000000},
         {"screwPitchDuX", FieldType::I32, offsetof(Conf, x.screwPitchDu), 1, 10000000},
         {"motorStepsX", FieldType::I32, offsetof(Conf, x.motorSteps), 1, 1000000},
-        {"speedStartX", FieldType::I32, offsetof(Conf, x.speedStart), 1, 1000000},
-        {"accelerationX", FieldType::I32, offsetof(Conf, x.acceleration), 1, 100000000},
-        {"decelerationX", FieldType::I32, offsetof(Conf, x.deceleration), 1, 100000000},
-        {"speedRapidX", FieldType::I32, offsetof(Conf, x.speedRapid), 1, 1000000},
+        {"speedStartDuPerMinX", FieldType::I32, offsetof(Conf, x.speedStartDuPerMin), 1, 60000000},
+        {"accelerationDuPerSec2X", FieldType::I32, offsetof(Conf, x.accelerationDuPerSec2), 1, 100000000},
+        {"decelerationDuPerSec2X", FieldType::I32, offsetof(Conf, x.decelerationDuPerSec2), 1, 100000000},
+        {"speedRapidDuPerMinX", FieldType::I32, offsetof(Conf, x.speedRapidDuPerMin), 1, 60000000},
         {"invertDirectionX", FieldType::Bool, offsetof(Conf, x.invertDirection), 0, 0},
         {"invertEnableX", FieldType::Bool, offsetof(Conf, x.invertEnable), 0, 0},
         {"maxTravelMmX", FieldType::I32, offsetof(Conf, x.maxTravelMm), 1, 10000},
@@ -101,6 +135,12 @@ namespace Settings
         {"handwheelPprX", FieldType::Float, offsetof(Conf, x.handwheelPpr), 1, 100000},
         {"invertHandwheelX", FieldType::Bool, offsetof(Conf, x.invertHandwheel), 0, 0},
         {"handwheelLagMsX", FieldType::I32, offsetof(Conf, x.handwheelLagMs), 1, 1000},
+        {"handwheelTravelDuX", FieldType::I32, offsetof(Conf, x.handwheelTravelDu), 1, 10000000},
+        {"homeFastDuPerMinX", FieldType::I32, offsetof(Conf, x.homeFastDuPerMin), 0, 60000000},
+        {"homeSlowDuPerMinX", FieldType::I32, offsetof(Conf, x.homeSlowDuPerMin), 0, 60000000},
+        {"homeLatchBackOffDuX", FieldType::I32, offsetof(Conf, x.homeLatchBackOffDu), 10000, 10000000},
+        {"homePullOffDuX", FieldType::I32, offsetof(Conf, x.homePullOffDu), 0, 10000000},
+        {"homePositionDuX", FieldType::I32, offsetof(Conf, x.homePositionDu), -10000000, 10000000},
     };
 
     const struct json_obj_descr CONF_JSON_DESCR[] = {
@@ -120,13 +160,18 @@ namespace Settings
         JSON_OBJ_DESCR_PRIM(Settings::Conf, probeBackOffDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM(Settings::Conf, probeDstDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM(Settings::Conf, probeOffsetDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM(Settings::Conf, requireHoming, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM(Settings::Conf, bootState, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM(Settings::Conf, xMotorEnabled, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM(Settings::Conf, homingEnabled, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM(Settings::Conf, probeEnabled, JSON_TOK_TRUE),
 
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "screwPitchDuZ", z.screwPitchDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "motorStepsZ", z.motorSteps, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedStartZ", z.speedStart, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "accelerationZ", z.acceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "decelerationZ", z.deceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedRapidZ", z.speedRapid, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedStartDuPerMinZ", z.speedStartDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "accelerationDuPerSec2Z", z.accelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "decelerationDuPerSec2Z", z.decelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedRapidDuPerMinZ", z.speedRapidDuPerMin, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "invertDirectionZ", z.invertDirection, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "invertEnableZ", z.invertEnable, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "maxTravelMmZ", z.maxTravelMm, JSON_TOK_NUMBER),
@@ -134,13 +179,19 @@ namespace Settings
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "handwheelPprZ", z.handwheelPpr, JSON_TOK_FLOAT_FP),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "invertHandwheelZ", z.invertHandwheel, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "handwheelLagMsZ", z.handwheelLagMs, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "handwheelTravelDuZ", z.handwheelTravelDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "homeFastDuPerMinZ", z.homeFastDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "homeSlowDuPerMinZ", z.homeSlowDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "homeLatchBackOffDuZ", z.homeLatchBackOffDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "homePullOffDuZ", z.homePullOffDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "homePositionDuZ", z.homePositionDu, JSON_TOK_NUMBER),
 
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "screwPitchDuX", x.screwPitchDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "motorStepsX", x.motorSteps, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedStartX", x.speedStart, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "accelerationX", x.acceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "decelerationX", x.deceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedRapidX", x.speedRapid, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedStartDuPerMinX", x.speedStartDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "accelerationDuPerSec2X", x.accelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "decelerationDuPerSec2X", x.decelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedRapidDuPerMinX", x.speedRapidDuPerMin, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "invertDirectionX", x.invertDirection, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "invertEnableX", x.invertEnable, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "maxTravelMmX", x.maxTravelMm, JSON_TOK_NUMBER),
@@ -148,11 +199,28 @@ namespace Settings
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "handwheelPprX", x.handwheelPpr, JSON_TOK_FLOAT_FP),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "invertHandwheelX", x.invertHandwheel, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "handwheelLagMsX", x.handwheelLagMs, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "handwheelTravelDuX", x.handwheelTravelDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "homeFastDuPerMinX", x.homeFastDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "homeSlowDuPerMinX", x.homeSlowDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "homeLatchBackOffDuX", x.homeLatchBackOffDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "homePullOffDuX", x.homePullOffDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "homePositionDuX", x.homePositionDu, JSON_TOK_NUMBER),
     };
 
     const struct json_obj_descr RENAMED_JSON_DESCR[] = {
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedManualMoveZ", z.speedRapid, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedManualMoveX", x.speedRapid, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedStartZ", z.speedStartDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "accelerationZ", z.accelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "decelerationZ", z.decelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedRapidZ", z.speedRapidDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedStartX", x.speedStartDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "accelerationX", x.accelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "decelerationX", x.decelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedRapidX", x.speedRapidDuPerMin, JSON_TOK_NUMBER),
+    };
+
+    const struct json_obj_descr OLDEST_JSON_DESCR[] = {
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedManualMoveZ", z.speedRapidDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(Settings::Conf, "speedManualMoveX", x.speedRapidDuPerMin, JSON_TOK_NUMBER),
     };
 
     size_t fieldIndexAt(size_t offset)
@@ -172,27 +240,49 @@ namespace Settings
                 return &f;
             }
         }
-        for (const auto &d : RENAMED_JSON_DESCR) {
-            if (!strcmp(d.field_name, name)) {
-                return &FIELDS[fieldIndexAt(d.offset)];
-            }
-        }
         return nullptr;
     }
 
-    const char *oldName(const Field &field)
+    const char *oldName(const Field &field, size_t index)
     {
         for (const auto &d : RENAMED_JSON_DESCR) {
-            if (d.offset == field.offset) {
+            if (d.offset == field.offset && index-- == 0) {
+                return d.field_name;
+            }
+        }
+        for (const auto &d : OLDEST_JSON_DESCR) {
+            if (d.offset == field.offset && index-- == 0) {
                 return d.field_name;
             }
         }
         return nullptr;
     }
 
+    void convertLegacy(const Field &field, Conf &conf)
+    {
+        const Axis &axis = axisOf(field, conf);
+        int32_t *value = (int32_t *)fieldPtr(field, conf);
+        double duPerStep = (double)axis.screwPitchDu / axis.motorSteps;
+        double du = (double)*value * duPerStep * (isSpeed(field) ? SECONDS_PER_MIN : 1.0);
+        *value = (int32_t)llround(CLAMP(du, field.min, field.max));
+    }
+
+    void deriveSteps(Conf &conf)
+    {
+        for (Axis *axis : {&conf.z, &conf.x}) {
+            axis->speedStartSteps = stepsPerSec(axis->speedStartDuPerMin / SECONDS_PER_MIN, *axis, MAX_SPEED_STEPS);
+            axis->speedRapidSteps = stepsPerSec(axis->speedRapidDuPerMin / SECONDS_PER_MIN, *axis, MAX_SPEED_STEPS);
+            axis->accelerationSteps = stepsPerSec(axis->accelerationDuPerSec2, *axis, MAX_ACCEL_STEPS);
+            axis->decelerationSteps = stepsPerSec(axis->decelerationDuPerSec2, *axis, MAX_ACCEL_STEPS);
+        }
+    }
+
     int64_t parseJson(char *json, size_t len, Conf &conf)
     {
-        // Old names first, so the current names overwrite them.
+        int64_t oldest = json_obj_parse(json, len, OLDEST_JSON_DESCR, ARRAY_SIZE(OLDEST_JSON_DESCR), &conf);
+        if (oldest < 0) {
+            return oldest;
+        }
         int64_t renamed = json_obj_parse(json, len, RENAMED_JSON_DESCR, ARRAY_SIZE(RENAMED_JSON_DESCR), &conf);
         if (renamed < 0) {
             return renamed;
@@ -201,12 +291,20 @@ namespace Settings
         if (mask < 0) {
             return mask;
         }
-        for (size_t i = 0; i < ARRAY_SIZE(RENAMED_JSON_DESCR); i++) {
-            if (renamed & BIT64(i)) {
-                mask |= (int64_t)BIT64(fieldIndexAt(RENAMED_JSON_DESCR[i].offset));
+        int64_t converted = 0;
+        auto convertFound = [&](const json_obj_descr *descr, size_t count, int64_t found) {
+            for (size_t i = 0; i < count; i++) {
+                size_t index = fieldIndexAt(descr[i].offset);
+                int64_t bit = (int64_t)BIT64(index);
+                if ((found & BIT64(i)) && !(mask & bit) && !(converted & bit)) {
+                    convertLegacy(FIELDS[index], conf);
+                    converted |= bit;
+                }
             }
-        }
-        return mask;
+        };
+        convertFound(OLDEST_JSON_DESCR, ARRAY_SIZE(OLDEST_JSON_DESCR), oldest);
+        convertFound(RENAMED_JSON_DESCR, ARRAY_SIZE(RENAMED_JSON_DESCR), renamed);
+        return mask | converted;
     }
 
     void *fieldPtr(const Field &f, Conf &conf)
@@ -305,7 +403,7 @@ namespace Settings
 
     bool paramName(const Field &field, char *out, size_t outMax, bool &length)
     {
-        static const char *const DROPPED[] = {"DuPerMin", "Du"};
+        static const char *const DROPPED[] = {"DuPerMin", "DuPerSec2", "Du"};
         size_t n = 0;
         length = false;
         if (outMax < 2) {

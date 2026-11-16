@@ -18,8 +18,10 @@
 #include "DisplayInternal.hpp"
 #include "GcodeCore.hpp"
 #include "GcodeStore.hpp"
+#include "HomeInput.hpp"
 #include "JogStep.hpp"
 #include "Machine.hpp"
+#include "Settings.hpp"
 #include "Wifi.hpp"
 #include "display_config.hpp"
 #include <ctype.h>
@@ -108,13 +110,13 @@ namespace
     }
 
     // Returns whether the run state or the skip layout (narrow stop + skip) toggled.
-    bool pushRun(Mode::Id current, bool running, bool ready, const Mode::Progress &job)
+    bool pushRun(Mode::Id current, bool running, bool homing, bool ready, const Mode::Progress &job)
     {
-        bool active = running && !job.waiting;
+        bool active = (running && !job.waiting) || homing;
         bool runChanged = pushNum("running.val", active);
         pushNum("ready.val", ready);
         pushNum("needZero.val", (int)Mode::startPrompt());
-        bool passCount = active && job.passes > 1;
+        bool passCount = running && active && job.passes > 1;
         bool canSkip = passCount && Mode::canSkip(current);
         if (canSkip) {
             pushText("stopPass.txt", "STOP %d/%d", (int)job.pass, (int)job.passes);
@@ -230,7 +232,7 @@ namespace
         }
         pushMenu(current);
         bool layoutChanged = pushPanel(current, s.params);
-        layoutChanged |= pushRun(current, s.running, s.ready, s.job);
+        layoutChanged |= pushRun(current, s.running, s.homing, s.ready, s.job);
         layoutChanged |= pushOverride(current, s.running, s.feedOverridePct);
         layoutChanged |= pushNum("picOn.val", current == Mode::Id::Gcode && atomic_get(&g_previewLoaded));
         layoutChanged |= pushGcode(current, s);
@@ -259,11 +261,48 @@ namespace
         if (!pushNum("estop.val", tripped)) {
             return;
         }
-        if (tripped) {
-            showToast("EStop tripped");
-        } else {
-            writeCommand("click toastHide,1");
+        writeCommand("click estopSync,1");
+    }
+
+    constexpr int HOME_NONE = 0;
+    constexpr int HOME_ALL = 1;
+    constexpr int HOME_BUSY = 2;
+    constexpr int HOME_NO_SENSORS = 3;
+    constexpr int WCS_COUNT = 6;
+
+    int homeState(const Status::Snapshot &s)
+    {
+        if (s.homing) {
+            return HOME_BUSY;
         }
+        bool zHomed = !HomeInput::present(Stepper::Axis::Z) || s.z.homed;
+        bool xHomed = !HomeInput::present(Stepper::Axis::X) || s.x.homed;
+        return zHomed && xHomed ? HOME_ALL : HOME_NONE;
+    }
+
+    void pushHome(const Status::Snapshot &s)
+    {
+        bool sensors = HomeInput::sensors();
+        bool changed = pushNum("homeState.val", sensors ? homeState(s) : HOME_NO_SENSORS);
+        if (sensors) {
+            pushText("wcsBtn.txt", "%s", s.wcs);
+            for (int i = 0; i < WCS_COUNT; i++) {
+                char key[KEY_MAX];
+                snprintf(key, sizeof(key), "wcs%d", i);
+                pushSelected(key, s.wcs[2] == '4' + i);
+            }
+        }
+        if (changed) {
+            writeCommand("click layoutSync,1");
+        }
+    }
+
+    void pushFeatures()
+    {
+        const Settings::Conf &conf = Settings::g_active;
+        pushSelected("featX", conf.xMotorEnabled);
+        pushSelected("featHome", conf.homingEnabled);
+        pushSelected("featProbe", conf.probeEnabled);
     }
 
     void pushWifi()
@@ -304,7 +343,7 @@ namespace Display::Detail
         }
 
         Status::Snapshot s = Status::get();
-        pushText("rpm.txt", "%d RPM", (int)s.rpm);
+        pushText("rpm.txt", "%d", (int)s.rpm);
         pushText("angle.txt", "%.1f\xC2\xB0", (double)s.angleDeg);
         pushNum("unitsInch.val", inchUnits());
         pushSelected("unitMm", !inchUnits());
@@ -315,7 +354,9 @@ namespace Display::Detail
         pushMode(s);
         pushJobError(s.error, s.running);
         pushEstop();
+        pushHome(s);
         pushWifi();
+        pushFeatures();
     }
 
     void pushSoon()

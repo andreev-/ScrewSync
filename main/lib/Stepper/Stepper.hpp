@@ -31,9 +31,8 @@ namespace Stepper
 
     void begin();
 
-    // Raw ena GPIO write -- used only by reconcile() internally and by
-    // Machine's EStop halt (a deliberate one-way bypass, since EStop always
-    // reboots right after). Everything else goes through setHoldRequested/
+    // Raw ena GPIO write -- used only by reconcile() internally and by the
+    // watchdog. Everything else goes through setHoldRequested/
     // setDisabled below so the two never fight over the pin.
     void setEnabled(Axis axis, bool enabled);
 
@@ -48,17 +47,19 @@ namespace Stepper
     // persisted/boot-restored form.
     void setDisabled(Axis axis, bool disabled);
     bool isDisabled(Axis axis);
+    const char *unavailable(Axis axis);
 
     // True while the axis is actually energized (held for a mode, mid-move,
     // or both), false while released or manually disabled.
     bool isHeld(Axis axis);
 
-    // Requests the axis move to targetSteps (motor steps from power-on
-    // zero), ramped per Settings::active.{z,x} acceleration/speedStart.
-    // maxSpeed caps this move, 0 = speedRapid (or the override).
+    // Requests the axis move to targetSteps (motor steps), ramped per Settings::active.{z,x} accelerationSteps/speedStartSteps.
+    // maxSpeed caps this move, 0 = speedRapidSteps (or the override).
     // Safe to call again mid-move to redirect the target. Returns the
     // accepted target: differs when travel-clamped or refused.
-    int64_t moveTo(Axis axis, int64_t targetSteps, int32_t maxSpeed = 0);
+    int64_t moveTo(Axis axis, int64_t targetSteps, int32_t maxSpeed = 0, bool homing = false);
+
+    void setHomingOnly(bool on);
 
     // At rest on the last accepted target.
     bool arrived(Axis axis);
@@ -85,6 +86,9 @@ namespace Stepper
     // the latch point for the probe's contact interrupt.
     int64_t haltNow(Axis axis);
 
+    void setTravelWindow(Axis axis, int64_t minSteps, int64_t maxSteps);
+    void clearTravelWindow(Axis axis);
+
     int64_t position(Axis axis);
     // Motor shaft position: position() without backlash compensation.
     int64_t motorPosition(Axis axis);
@@ -92,7 +96,7 @@ namespace Stepper
 
     // Runtime max-speed override for moveTo() (e.g. a touchscreen jog-speed
     // slider): 0 clears it, falling back to Settings::active.{z,x}'s
-    // configured speedRapid. Not persisted -- deliberately separate
+    // configured speedRapidSteps. Not persisted -- deliberately separate
     // from that configured default rather than overwriting it.
     void setSpeedOverride(Axis axis, int32_t speedStepsPerSec);
 }

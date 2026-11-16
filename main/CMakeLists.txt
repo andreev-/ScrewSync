@@ -23,7 +23,9 @@ target_sources(app PRIVATE
     lib/Settings/SettingsFields.cpp
     lib/RunSettings/RunSettings.cpp
     lib/Machine/Machine.cpp
+    lib/Machine/EstopInput.cpp
     lib/Wcs/Wcs.cpp
+    lib/Wcs/WcsRules.cpp
     lib/Watchdog/Watchdog.cpp
     lib/Mode/Mode.cpp
     lib/Mode/ModeParams.cpp
@@ -43,6 +45,9 @@ target_sources(app PRIVATE
     lib/Mode/ModeSteps.cpp
     lib/Mode/ModeMdi.cpp
     lib/Probe/ProbeInput.cpp
+    lib/Homing/HomeInput.cpp
+    lib/Homing/Homing.cpp
+    lib/Homing/HomingSeq.cpp
     lib/Pins/Pins.cpp
     lib/Pins/PinMap.cpp
     lib/Pins/PinMapJson.cpp
@@ -104,6 +109,7 @@ target_include_directories(app PRIVATE
     lib/Watchdog
     lib/Mode
     lib/Probe
+    lib/Homing
     lib/Pins
     include
     lib/Thread

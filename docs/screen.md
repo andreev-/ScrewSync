@@ -41,8 +41,20 @@
   (`program.nx` globals). Every page ages the link on a timer and shows a
   non-dismissable blocking toast: blue while flashing, red once the link is
   lost. It starts shown, so it covers boot until the first heartbeat.
-- Machine state `estop`: the error toast stays up (no timeout); its tap
-  sends `estop ack`.
+- Header icons at the top left of page0 (icons from the Lucide set, drawn
+  from SVG files in `pictures/icons`):
+  - Estop icon: a tap sends `estop on`. In estop a full-screen cover shows
+    a big estop icon. A tap on it sends `estop off`. A line at the bottom
+    says to tap to disarm; a refusal replaces it in red.
+  - Home icon: a tap sends `home`. Its colour shows the homed state: grey =
+    not homed, green = homed, blue = homing in progress. Only axes with a
+    home input count.
+  - WCS selector: a button with the active work coordinate system. A tap
+    opens a list of G54 to G59. A pick sends the G-code word as an MDI line.
+    A refusal shows as a toast.
+  - The home icon and the WCS selector show only when the pin map has home
+    inputs.
+- Axis enable buttons send `power on|off z|x`.
 
 ## Layout
 
@@ -80,7 +92,8 @@
 
 ## Limits and job geometry
 
-- No global travel stops. Machine protection is the `maxTravelMm` clamp.
+- No global travel stops. A homed axis has travel limits: the home
+  position and `maxTravelMm` below it. An axis that is not homed has none.
 - Each mode defines its own geometry: start = position at engage
   (touch-off) or typed; lengths/depths typed. A [here] helper may fill a
   length from the current position, but is never required.
@@ -99,6 +112,10 @@ What each mode does: `docs/features.md`. Display specifics:
   group starts empty. Flank and Spring are latching buttons. Passes,
   starts, taper and the latches use 3-column rows.
 - Probe: a panel, not a mode; `docs/probe.md`.
+- A mode that needs a missing feature (X motor, probe) is not in the menu.
+  The X column stays; with no X motor it shows X off, the X power button is refused and the
+  X jog buttons do nothing.
+- The Settings page has a toggle per feature (X motor, Homing, Probe).
 - Turn, Thread, Part and Ellipse have a spindle Fwd/Rev toggle.
 - Multi-pass modes show phase and pass n/m, and offer skip.
 - Every mode but Thread has a feed override row above

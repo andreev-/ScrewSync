@@ -2,6 +2,7 @@ export interface AxisStatus {
   posDu: number
   moving: boolean
   enabled: boolean
+  homed: boolean
 }
 
 export interface GearStatus {
@@ -24,6 +25,8 @@ export interface StatusPush {
   jogStepDu: number
   gear: GearStatus
   probeContact: boolean
+  homing: boolean
+  wcs: string
   job: JobStatus
   error: string
 }
@@ -60,4 +63,10 @@ export interface WifiPush {
   fallback: boolean
   savedCount: number
   saved: SavedNetwork[]
+}
+
+export interface Capabilities {
+  has_x_motor: boolean
+  has_endstops: boolean
+  has_probe: boolean
 }

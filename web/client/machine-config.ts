@@ -1,3 +1,5 @@
+import type { Capabilities } from "./types"
+
 export interface MachineConfigField {
   key: string
   label: string
@@ -7,13 +9,17 @@ export interface MachineConfigField {
   max?: number
   step?: number
   scale?: number
-  type?: "checkbox"
+  /** A speed or acceleration: shown in the machine units. */
+  rate?: "speed" | "accel"
+  type?: "checkbox" | "select"
+  options?: { value: number; label: string }[]
 }
 
 export interface MachineConfigPair {
   z: MachineConfigField
   x: MachineConfigField
   copy: boolean
+  needsEndstops?: boolean
 }
 
 export interface MachineConfigSection {
@@ -25,7 +31,13 @@ export interface MachineConfigSection {
   commonTitle?: string
   pairs?: MachineConfigPair[]
   pairsTitle?: string
+  needsEndstops?: boolean
+  needsProbe?: boolean
 }
+
+const DU_PER_MM = 10000
+const DU_PER_INCH = 254000
+const INCH_STEP = 0.00001
 
 export function axisFields(axis: "Z" | "X"): MachineConfigField[] {
   const a = axis === "Z" ? "the carriage" : "the cross-slide"
@@ -60,22 +72,26 @@ export function axisFields(axis: "Z" | "X"): MachineConfigField[] {
       help: `Lost ${axis} motion when reversing direction. Measure with a dial indicator: move one way, zero it, reverse until the indicator starts moving.`,
     },
     {
-      key: `speedStart${axis}`,
+      key: `speedStartDuPerMin${axis}`,
       label: "Start speed",
-      unit: "steps/s",
-      min: 1,
-      max: 1000000,
-      step: 1,
-      help: "Initial step pulse rate when motion starts. Use a value the motor can start from reliably without missing steps.",
+      unit: "mm/min",
+      min: 0.0001,
+      max: 6000,
+      step: 0.0001,
+      scale: DU_PER_MM,
+      rate: "speed",
+      help: "Initial speed when motion starts. Use a value the motor can start from reliably without missing steps.",
     },
     {
-      key: `speedRapid${axis}`,
+      key: `speedRapidDuPerMin${axis}`,
       label: "Rapid speed",
-      unit: "steps/s",
-      min: 1,
-      max: 1000000,
-      step: 1,
-      help: `Top speed for rapids, jogs and manual moves on ${axis}. Axis speed depends on both this value and steps per mm.`,
+      unit: "mm/min",
+      min: 0.0001,
+      max: 6000,
+      step: 0.0001,
+      scale: DU_PER_MM,
+      rate: "speed",
+      help: `Top speed for rapids, jogs and manual moves on ${axis}.`,
     },
     {
       key: `maxTravelMm${axis}`,
@@ -87,21 +103,25 @@ export function axisFields(axis: "Z" | "X"): MachineConfigField[] {
       help: `Maximum single ${axis} move the controller will allow. Set a little above the physically safe travel of ${a}.`,
     },
     {
-      key: `acceleration${axis}`,
+      key: `accelerationDuPerSec2${axis}`,
       label: "Acceleration",
-      unit: "steps/s^2",
-      min: 1,
-      max: 100000000,
-      step: 1,
+      unit: "mm/s²",
+      min: 0.0001,
+      max: 10000,
+      step: 0.0001,
+      scale: DU_PER_MM,
+      rate: "accel",
       help: `Ramp rate for speeding up. Higher feels snappier but can skip steps if the motor or ${a} cannot keep up.`,
     },
     {
-      key: `deceleration${axis}`,
+      key: `decelerationDuPerSec2${axis}`,
       label: "Deceleration",
-      unit: "steps/s^2",
-      min: 1,
-      max: 100000000,
-      step: 1,
+      unit: "mm/s²",
+      min: 0.0001,
+      max: 10000,
+      step: 0.0001,
+      scale: DU_PER_MM,
+      rate: "accel",
       help: `Ramp rate for slowing down. Friction helps the motor stop, so this can be higher than acceleration.`,
     },
     {
@@ -129,10 +149,72 @@ export function axisFields(axis: "Z" | "X"): MachineConfigField[] {
       help: `How far ${axis} may fall behind a fast handwheel, as time at the rapid speed. Turning beyond that is dropped, so ${axis} stops soon after the handwheel stops.`,
     },
     {
+      key: `handwheelTravelDu${axis}`,
+      label: "Handwheel travel per turn",
+      unit: "mm",
+      min: 0.0001,
+      max: 1000,
+      step: 0.0001,
+      scale: 10000,
+      help: `Distance ${axis} moves for one full turn of the ${axis} handwheel.`,
+    },
+    {
       key: `invertHandwheel${axis}`,
       label: "Invert direction",
       type: "checkbox",
       help: `Toggle if turning the ${axis} handwheel moves the axis the wrong way.`,
+    },
+    {
+      key: `homeFastDuPerMin${axis}`,
+      label: "Home fast speed",
+      unit: "mm/min",
+      min: 0,
+      max: 6000,
+      step: 0.0001,
+      scale: DU_PER_MM,
+      rate: "speed",
+      help: `Speed of the first pass of ${axis} toward the home switch.`,
+    },
+    {
+      key: `homeSlowDuPerMin${axis}`,
+      label: "Home slow speed",
+      unit: "mm/min",
+      min: 0,
+      max: 6000,
+      step: 0.0001,
+      scale: DU_PER_MM,
+      rate: "speed",
+      help: `Speed of the second pass of ${axis} toward the home switch.`,
+    },
+    {
+      key: `homeLatchBackOffDu${axis}`,
+      label: "Home latch back-off",
+      unit: "mm",
+      min: 1,
+      max: 1000,
+      step: 0.0001,
+      scale: DU_PER_MM,
+      help: `Distance ${axis} backs off after the fast pass, before the slow pass.`,
+    },
+    {
+      key: `homePullOffDu${axis}`,
+      label: "Home pull-off",
+      unit: "mm",
+      min: 0,
+      max: 1000,
+      step: 0.0001,
+      scale: DU_PER_MM,
+      help: `Distance ${axis} moves off the switch after the slow pass.`,
+    },
+    {
+      key: `homePositionDu${axis}`,
+      label: "Home position",
+      unit: "mm",
+      min: -1000,
+      max: 1000,
+      step: 0.0001,
+      scale: DU_PER_MM,
+      help: `Machine coordinate of ${axis} after the pull-off.`,
     },
     {
       key: `invertEnable${axis}`,
@@ -146,7 +228,7 @@ export function axisFields(axis: "Z" | "X"): MachineConfigField[] {
 const Z_FIELDS = axisFields("Z")
 const X_FIELDS = axisFields("X")
 
-function pair(name: string, copy: boolean): MachineConfigPair {
+function pair(name: string, copy: boolean, needsEndstops = false): MachineConfigPair {
   const find = (fields: MachineConfigField[], key: string) => {
     const f = fields.find((x) => x.key === key)
     if (!f) {
@@ -154,7 +236,7 @@ function pair(name: string, copy: boolean): MachineConfigPair {
     }
     return f
   }
-  return { z: find(Z_FIELDS, `${name}Z`), x: find(X_FIELDS, `${name}X`), copy }
+  return { z: find(Z_FIELDS, `${name}Z`), x: find(X_FIELDS, `${name}X`), copy, needsEndstops }
 }
 
 export const MACHINE_CONFIG_SECTIONS: MachineConfigSection[] = [
@@ -209,7 +291,7 @@ export const MACHINE_CONFIG_SECTIONS: MachineConfigSection[] = [
       pair("screwPitchDu", false),
       pair("motorSteps", true),
       pair("backlashDu", false),
-      pair("maxTravelMm", false),
+      pair("maxTravelMm", false, true),
       pair("invertDirection", false),
       pair("invertEnable", false),
     ],
@@ -217,7 +299,31 @@ export const MACHINE_CONFIG_SECTIONS: MachineConfigSection[] = [
   {
     title: "Motion",
     fields: [],
-    pairs: [pair("speedStart", true), pair("speedRapid", true), pair("acceleration", true), pair("deceleration", true)],
+    pairs: [
+      pair("speedStartDuPerMin", true),
+      pair("speedRapidDuPerMin", true),
+      pair("accelerationDuPerSec2", true),
+      pair("decelerationDuPerSec2", true),
+    ],
+  },
+  {
+    title: "Homing",
+    needsEndstops: true,
+    fields: [
+      {
+        key: "requireHoming",
+        label: "Require homing",
+        type: "checkbox",
+        help: "Refuse jog, start, routine calls and G-code moves until the axes are homed.",
+      },
+    ],
+    pairs: [
+      pair("homeFastDuPerMin", true),
+      pair("homeSlowDuPerMin", true),
+      pair("homeLatchBackOffDu", true),
+      pair("homePullOffDu", true),
+      pair("homePositionDu", false),
+    ],
   },
   {
     title: "Manual movement",
@@ -241,6 +347,7 @@ export const MACHINE_CONFIG_SECTIONS: MachineConfigSection[] = [
         help: "Pause between repeated precision steps while a manual move button is held.",
       },
     ],
+    pairs: [pair("handwheelTravelDu", false)],
   },
   {
     title: "Automated modes",
@@ -268,7 +375,24 @@ export const MACHINE_CONFIG_SECTIONS: MachineConfigSection[] = [
     ],
   },
   {
+    title: "Startup",
+    fields: [
+      {
+        key: "bootState",
+        label: "Boot state",
+        type: "select",
+        options: [
+          { value: 0, label: "Estop" },
+          { value: 1, label: "Estop off, motors off" },
+          { value: 2, label: "Estop off, motors on" },
+        ],
+        help: "State after power-up. A watchdog, crash or brownout reset, or an active estop input, always starts in estop.",
+      },
+    ],
+  },
+  {
     title: "Probe",
+    needsProbe: true,
     fields: [
       {
         key: "probeFeedDuPerMin",
@@ -278,6 +402,7 @@ export const MACHINE_CONFIG_SECTIONS: MachineConfigSection[] = [
         max: 6000,
         step: 0.0001,
         scale: 10000,
+        rate: "speed",
         help: "Feed rate for the first touch. Keep slow so the probe stops within its travel after it triggers.",
       },
       {
@@ -288,6 +413,7 @@ export const MACHINE_CONFIG_SECTIONS: MachineConfigSection[] = [
         max: 6000,
         step: 0.0001,
         scale: 10000,
+        rate: "speed",
         help: "Feed rate for the back-offs and the reprobe. Slower than the probe feed for a more accurate second touch.",
       },
       {
@@ -330,11 +456,35 @@ export const MACHINE_CONFIG_SECTIONS: MachineConfigSection[] = [
   },
 ]
 
-export const MACHINE_CONFIG_FIELDS: MachineConfigField[] = MACHINE_CONFIG_SECTIONS.flatMap((s) => [
-  ...s.fields,
-  ...(s.common ?? []),
-  ...(s.pairs ?? []).flatMap((p) => [p.z, p.x]),
-])
+export function configFields(sections: MachineConfigSection[]): MachineConfigField[] {
+  return sections.flatMap((s) => [...s.fields, ...(s.common ?? []), ...(s.pairs ?? []).flatMap((p) => [p.z, p.x])])
+}
+
+export const MACHINE_CONFIG_FIELDS: MachineConfigField[] = configFields(MACHINE_CONFIG_SECTIONS)
+
+export function inUnits(field: MachineConfigField, units: "mm" | "inch"): MachineConfigField {
+  if (!field.rate || units !== "inch") {
+    return field
+  }
+  return {
+    ...field,
+    unit: field.rate === "speed" ? "in/min" : "in/s²",
+    min: INCH_STEP,
+    max: (field.max! * field.scale!) / DU_PER_INCH,
+    step: INCH_STEP,
+    scale: DU_PER_INCH,
+  }
+}
+
+export function sectionsInUnits(units: "mm" | "inch"): MachineConfigSection[] {
+  const convert = (f: MachineConfigField) => inUnits(f, units)
+  return MACHINE_CONFIG_SECTIONS.map((s) => ({
+    ...s,
+    fields: s.fields.map(convert),
+    common: s.common?.map(convert),
+    pairs: s.pairs?.map((p) => ({ ...p, z: convert(p.z), x: convert(p.x) })),
+  }))
+}
 
 export function parseMachineConfig(data: unknown): Record<string, string> {
   const out: Record<string, string> = {}
@@ -358,4 +508,25 @@ return display ? "1" : "0"
 }
   const n = display as number
   return String(field.scale ? Math.round(n * field.scale) : n)
+}
+
+export function sectionsForCapabilities(
+  sections: MachineConfigSection[],
+  capabilities: Pick<Capabilities, "has_endstops" | "has_probe">,
+): MachineConfigSection[] {
+  const shown = sections.filter((s) => (capabilities.has_endstops || !s.needsEndstops) && (capabilities.has_probe || !s.needsProbe))
+  if (capabilities.has_endstops) {
+    return shown
+  }
+  return shown.map((s) => ({ ...s, pairs: s.pairs?.filter((p) => !p.needsEndstops) }))
+}
+
+export const FEATURES = [
+  { id: "xMotor", key: "xMotorEnabled", label: "X motor", help: "The X axis motor and the modes that need it." },
+  { id: "homing", key: "homingEnabled", label: "Homing", help: "The home inputs and homing." },
+  { id: "probe", key: "probeEnabled", label: "Probe", help: "The probe input and the probe." },
+]
+
+export function disabledFeatures(raw: Record<string, string>): string[] {
+  return FEATURES.filter((f) => raw[f.key] === "false").map((f) => f.id)
 }

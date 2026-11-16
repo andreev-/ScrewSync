@@ -19,6 +19,8 @@
 #include <string.h>
 #include <zephyr/data/json.h>
 #include <zephyr/sys/util.h>
+#include "HomeInput.hpp"
+#include "Pins.hpp"
 #include "Settings.hpp"
 #include "Status.hpp"
 #include "Wifi.hpp"
@@ -29,6 +31,7 @@ namespace
         JSON_OBJ_DESCR_PRIM(Status::Axis, posDu, JSON_TOK_INT64),
         JSON_OBJ_DESCR_PRIM(Status::Axis, moving, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM(Status::Axis, enabled, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM(Status::Axis, homed, JSON_TOK_TRUE),
     };
 
     const struct json_obj_descr GEAR_DESCR[] = {
@@ -67,6 +70,8 @@ namespace
         JSON_OBJ_DESCR_PRIM_NAMED(StatusMsg, "error", snap.error, JSON_TOK_STRING),
         JSON_OBJ_DESCR_PRIM(StatusMsg, params, JSON_TOK_STRING),
         JSON_OBJ_DESCR_PRIM_NAMED(StatusMsg, "probeContact", snap.probeContact, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM_NAMED(StatusMsg, "homing", snap.homing, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM_NAMED(StatusMsg, "wcs", snap.wcs, JSON_TOK_STRING),
     };
 
     struct SettingsMsg
@@ -92,13 +97,18 @@ namespace
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "probeBackOffDu", conf.probeBackOffDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "probeDstDu", conf.probeDstDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "probeOffsetDu", conf.probeOffsetDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "requireHoming", conf.requireHoming, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "bootState", conf.bootState, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "xMotorEnabled", conf.xMotorEnabled, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homingEnabled", conf.homingEnabled, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "probeEnabled", conf.probeEnabled, JSON_TOK_TRUE),
 
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "screwPitchDuZ", conf.z.screwPitchDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "motorStepsZ", conf.z.motorSteps, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedStartZ", conf.z.speedStart, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "accelerationZ", conf.z.acceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "decelerationZ", conf.z.deceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedRapidZ", conf.z.speedRapid, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedStartDuPerMinZ", conf.z.speedStartDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "accelerationDuPerSec2Z", conf.z.accelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "decelerationDuPerSec2Z", conf.z.decelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedRapidDuPerMinZ", conf.z.speedRapidDuPerMin, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "invertDirectionZ", conf.z.invertDirection, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "invertEnableZ", conf.z.invertEnable, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "maxTravelMmZ", conf.z.maxTravelMm, JSON_TOK_NUMBER),
@@ -106,13 +116,19 @@ namespace
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "handwheelPprZ", conf.z.handwheelPpr, JSON_TOK_FLOAT_FP),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "invertHandwheelZ", conf.z.invertHandwheel, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "handwheelLagMsZ", conf.z.handwheelLagMs, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "handwheelTravelDuZ", conf.z.handwheelTravelDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homeFastDuPerMinZ", conf.z.homeFastDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homeSlowDuPerMinZ", conf.z.homeSlowDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homeLatchBackOffDuZ", conf.z.homeLatchBackOffDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homePullOffDuZ", conf.z.homePullOffDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homePositionDuZ", conf.z.homePositionDu, JSON_TOK_NUMBER),
 
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "screwPitchDuX", conf.x.screwPitchDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "motorStepsX", conf.x.motorSteps, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedStartX", conf.x.speedStart, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "accelerationX", conf.x.acceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "decelerationX", conf.x.deceleration, JSON_TOK_NUMBER),
-        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedRapidX", conf.x.speedRapid, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedStartDuPerMinX", conf.x.speedStartDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "accelerationDuPerSec2X", conf.x.accelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "decelerationDuPerSec2X", conf.x.decelerationDuPerSec2, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "speedRapidDuPerMinX", conf.x.speedRapidDuPerMin, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "invertDirectionX", conf.x.invertDirection, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "invertEnableX", conf.x.invertEnable, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "maxTravelMmX", conf.x.maxTravelMm, JSON_TOK_NUMBER),
@@ -120,6 +136,12 @@ namespace
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "handwheelPprX", conf.x.handwheelPpr, JSON_TOK_FLOAT_FP),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "invertHandwheelX", conf.x.invertHandwheel, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "handwheelLagMsX", conf.x.handwheelLagMs, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "handwheelTravelDuX", conf.x.handwheelTravelDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homeFastDuPerMinX", conf.x.homeFastDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homeSlowDuPerMinX", conf.x.homeSlowDuPerMin, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homeLatchBackOffDuX", conf.x.homeLatchBackOffDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homePullOffDuX", conf.x.homePullOffDu, JSON_TOK_NUMBER),
+        JSON_OBJ_DESCR_PRIM_NAMED(SettingsMsg, "homePositionDuX", conf.x.homePositionDu, JSON_TOK_NUMBER),
     };
 
     struct SavedNet
@@ -184,6 +206,32 @@ namespace
     const struct json_obj_descr SCAN_MSG_DESCR[] = {
         JSON_OBJ_DESCR_PRIM(ScanMsg, type, JSON_TOK_STRING),
         JSON_OBJ_DESCR_OBJ_ARRAY(ScanMsg, aps, WIFI_SCAN_KEEP, apsLen, SCAN_AP_DESCR, ARRAY_SIZE(SCAN_AP_DESCR)),
+    };
+
+    struct Capabilities
+    {
+        bool has_x_motor;
+        bool has_endstops;
+        bool has_probe;
+    };
+
+    struct CapabilitiesMsg
+    {
+        const char *type;
+        Capabilities caps;
+    };
+
+    const struct json_obj_descr CAPABILITIES_DESCR[] = {
+        JSON_OBJ_DESCR_PRIM(Capabilities, has_x_motor, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM(Capabilities, has_endstops, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM(Capabilities, has_probe, JSON_TOK_TRUE),
+    };
+
+    const struct json_obj_descr CAPABILITIES_MSG_DESCR[] = {
+        JSON_OBJ_DESCR_PRIM(CapabilitiesMsg, type, JSON_TOK_STRING),
+        JSON_OBJ_DESCR_PRIM_NAMED(CapabilitiesMsg, "has_x_motor", caps.has_x_motor, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM_NAMED(CapabilitiesMsg, "has_endstops", caps.has_endstops, JSON_TOK_TRUE),
+        JSON_OBJ_DESCR_PRIM_NAMED(CapabilitiesMsg, "has_probe", caps.has_probe, JSON_TOK_TRUE),
     };
 
     struct TypedMsg
@@ -251,6 +299,16 @@ namespace WsMessages
         }
         m.apsLen = n;
         return encode(SCAN_MSG_DESCR, m, out, outMax);
+    }
+
+    int capabilities(char *out, size_t outMax, bool withType)
+    {
+        Capabilities caps = {Pins::count(PinMap::Fn::XMotor) > 0, HomeInput::sensors(),
+                             Pins::count(PinMap::Fn::Probe) > 0};
+        if (withType) {
+            return encode(CAPABILITIES_MSG_DESCR, CapabilitiesMsg{"capabilities", caps}, out, outMax);
+        }
+        return encode(CAPABILITIES_DESCR, caps, out, outMax);
     }
 
     int typed(char *out, size_t outMax, const char *type, const char *msg)

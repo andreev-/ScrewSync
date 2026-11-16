@@ -41,13 +41,14 @@ namespace Display::Theme
     constexpr int COLOR_ZERO = 45763;
     constexpr int COLOR_ZERO_PRESSED = 52069;
     constexpr int COLOR_NOT_SET = 64138;
+    constexpr int COLOR_ERROR = 64138;
     constexpr int COLOR_SETTINGS = 10829; // matches menuSettings's bco
 
     // displays/nextion-5in/app.toml font order; arrows exist only in the symbols font.
     constexpr int FONT_LABEL = 0;
     constexpr int FONT_SYMBOLS = 2;
 
-    // Mode panel cell types (cKindN.val), matching displays/nextion-5in/pages/page0.nx.
+    // Mode panel cell types (cKindN), matching displays/nextion-5in/pages/page0.nx.
     // Value types pick the keypad's conversion; the cell's command gets the
     // typed value appended. Toggle cells hold two commands, "a|b".
     enum class CellType : uint8_t

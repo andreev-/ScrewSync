@@ -17,6 +17,7 @@
  */
 #include "Motion.hpp"
 #include "Encoder.hpp"
+#include "Homing.hpp"
 #include "Machine.hpp"
 #include "Mode.hpp"
 #include "RunSettings.hpp"
@@ -55,10 +56,17 @@ namespace Motion
         return Machine::state() == Machine::State::Idle && !Mode::busy();
     }
 
+    bool configurable()
+    {
+        Machine::State s = Machine::state();
+        return (s == Machine::State::Idle || s == Machine::State::EStop) && !Mode::busy();
+    }
+
     void setAxisEnabled(Stepper::Axis axis, bool enabled)
     {
         if (!enabled) {
             Mode::onAxisDisabled(axis);
+            Homing::clearHomed(axis);
         }
         RunSettings::setAxisDisabled(axis, !enabled);
     }

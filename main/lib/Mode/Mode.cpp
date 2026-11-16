@@ -19,7 +19,9 @@
 #include "RunSettings.hpp"
 #include "Encoder.hpp"
 #include "Events.hpp"
+#include "Homing.hpp"
 #include "Machine.hpp"
+#include "Pins.hpp"
 #include "Watchdog.hpp"
 #include "ModeSteps.hpp"
 #include "Wcs.hpp"
@@ -107,6 +109,9 @@ namespace
         if (Mode::Detail::mdiActive()) {
             return "MDI running";
         }
+        if (Homing::active()) {
+            return "homing";
+        }
         if (!ops) {
             return "mode not implemented";
         }
@@ -149,6 +154,8 @@ namespace
                 }
             } else if (Mode::Detail::mdiActive()) {
                 Mode::Detail::mdiTick(Encoder::filteredPosition());
+            } else if (Homing::active()) {
+                Homing::tick();
             }
             k_mutex_unlock(&g_lock);
             k_sleep(K_MSEC(TICK_PERIOD_MS));
@@ -271,6 +278,9 @@ namespace Mode
                 RunSettings::loadModeParams(NAMES[i], OPS[i]->params, OPS[i]->paramsSize);
             }
         }
+        if (unavailable(current())) {
+            RunSettings::setMode(Id::Gear);
+        }
         Detail::mdiBegin();
         k_thread_create(&g_runnerThread, g_runnerStack, K_THREAD_STACK_SIZEOF(g_runnerStack), runnerLoop, nullptr,
                         nullptr, nullptr, K_PRIO_PREEMPT(5), 0, K_NO_WAIT);
@@ -306,7 +316,7 @@ namespace Mode
     bool busy()
     {
         Detail::Guard guard;
-        return g_active != nullptr || Detail::mdiActive();
+        return g_active != nullptr || Detail::mdiActive() || Homing::active();
     }
 
     bool owns(Stepper::Axis axis)
@@ -315,11 +325,25 @@ namespace Mode
         return ownedFlag(axis);
     }
 
+    const char *unavailable(Id id)
+    {
+        bool needsX = id == Id::Turn || id == Id::Thread || id == Id::Part || id == Id::Slot || id == Id::Ellipse;
+        const char *refusal = needsX ? Stepper::unavailable(Stepper::Axis::X) : nullptr;
+        if (!refusal && id == Id::Probe) {
+            refusal = Pins::unavailable(PinMap::Feature::Probe);
+        }
+        return refusal;
+    }
+
     const char *select(Id id)
     {
         Detail::Guard guard;
         if (g_active) {
             return "stop first";
+        }
+        const char *refusal = unavailable(id);
+        if (refusal) {
+            return refusal;
         }
         RunSettings::setMode(id);
         return nullptr;
@@ -329,6 +353,10 @@ namespace Mode
     {
         Detail::Guard guard;
         Id id = current();
+        const char *unavailableReason = unavailable(id);
+        if (unavailableReason) {
+            return unavailableReason;
+        }
         const Ops *ops = OPS[(size_t)id];
         if (!fromZero || g_active) {
             return startOps(id, ops);
@@ -458,6 +486,7 @@ namespace Mode
     {
         Detail::Guard guard;
         Detail::mdiClear();
+        Homing::stop();
         releaseAll();
         for (Stepper::Axis axis : {Stepper::Axis::Z, Stepper::Axis::X}) {
             Stepper::stop(axis);

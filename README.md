@@ -49,8 +49,9 @@ A spring pass at full depth finishes the thread.
 
 Put any function on any free connector pin, from the web client. Motors,
 encoders, handwheels, a probe, physical buttons for start, stop, zero and
-modes, and a "running" output. Rename the connectors to match your wiring.
-No rebuild, no soldering of adapters. See [docs/pins.md](docs/pins.md).
+modes, home and estop inputs, and "running" and "estop" outputs. Rename the connectors to match your wiring.
+No rebuild, no soldering of adapters. Turn off the X motor, homing or the
+probe if the machine has none. See [docs/pins.md](docs/pins.md).
 
 <p float="left">
   <img src="docs/images/web-pins.png" width="400" />
@@ -119,6 +120,7 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Built for the [nanoels](https://github.com/kachurovskiy/nanoels) H5 hardware.
 ScrewSync is licensed under AGPL-3.0-or-later.
+Third-party notices (icons and fonts) are in [NOTICE.md](NOTICE.md).
 
 ### :heart: If this project is useful to you, consider supporting it
 

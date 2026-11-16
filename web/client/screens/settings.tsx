@@ -3,17 +3,18 @@
 import { useEffect, useState } from "react"
 import { sendCommand } from "../api"
 import { SaveBar, useFooterBar } from "../footer-bar"
-import { CONFIGURE_LOCK_MESSAGE, useCanConfigure } from "../state-provider"
+import { CONFIGURE_LOCK_MESSAGE, useCanConfigure, useDeviceState } from "../state-provider"
 import {
-  MACHINE_CONFIG_FIELDS,
-  MACHINE_CONFIG_SECTIONS,
+  configFields,
   parseMachineConfig,
+  sectionsForCapabilities,
+  sectionsInUnits,
   toDisplayValue,
   toRawValue,
   type MachineConfigField,
   type MachineConfigPair,
 } from "../machine-config"
-import { InfoIcon, LockNotice, Panel, TextInput, Toggle } from "../ui/primitives"
+import { InfoIcon, LockNotice, Panel, Select, TextInput, Toggle } from "../ui/primitives"
 import { useToast } from "../ui/toast"
 
 export function SettingsScreen() {
@@ -23,6 +24,12 @@ export function SettingsScreen() {
   const [busy, setBusy] = useState(false)
   const canConfigure = useCanConfigure()
   const toast = useToast()
+  const { state, capabilities } = useDeviceState()
+  const hasX = capabilities?.has_x_motor ?? false
+  const sections = sectionsForCapabilities(sectionsInUnits(state?.units ?? "mm"), {
+    has_endstops: capabilities?.has_endstops ?? false,
+    has_probe: capabilities?.has_probe ?? false,
+  })
 
   async function load() {
     setLoading(true)
@@ -47,7 +54,7 @@ export function SettingsScreen() {
   useFooterBar(
     raw && (
       <SaveBar
-        dirty={MACHINE_CONFIG_FIELDS.some((f) => f.key in dirty && valueOf(f) !== toDisplayValue(f, raw[f.key]))}
+        dirty={configFields(sections).some((f) => f.key in dirty && valueOf(f) !== toDisplayValue(f, raw[f.key]))}
         saveDisabled={busy || loading || !canConfigure}
         discardDisabled={busy || loading}
         resetDisabled={busy || loading || !canConfigure}
@@ -128,7 +135,7 @@ toast.push("Applied and saved to flash.", "good")
         </Panel>
       ) : (
         <fieldset disabled={!canConfigure} className="contents">
-          {MACHINE_CONFIG_SECTIONS.map((section) => (
+          {sections.map((section) => (
           <Panel key={section.title} title={section.title}>
             <div className="flex flex-col gap-4">
               {section.fields.length > 0 && (
@@ -148,7 +155,7 @@ toast.push("Applied and saved to flash.", "good")
                   ))}
                 </div>
               )}
-              {section.pairs && <AxisGrid pairs={section.pairs} title={section.pairsTitle} valueOf={valueOf} onChange={setField} />}
+              {section.pairs && <AxisGrid pairs={section.pairs} title={section.pairsTitle} hasX={hasX} valueOf={valueOf} onChange={setField} />}
             </div>
           </Panel>
           ))}
@@ -172,6 +179,17 @@ function FieldInput({ field, value, onChange }: { field: MachineConfigField; val
       </span>
     )
   }
+  if (field.type === "select") {
+    return (
+      <Select className="w-full min-w-0" value={value as number} onChange={(e) => onChange(Number(e.target.value))}>
+        {field.options!.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </Select>
+    )
+  }
   return (
     <TextInput
       type="number"
@@ -191,11 +209,13 @@ const SUBTITLE = "text-xs font-semibold uppercase tracking-wide text-muted-foreg
 function AxisGrid({
   pairs,
   title,
+  hasX,
   valueOf,
   onChange,
 }: {
   pairs: MachineConfigPair[]
   title?: string
+  hasX: boolean
   valueOf: (field: MachineConfigField) => Value
   onChange: (field: MachineConfigField, v: Value) => void
 }) {
@@ -227,15 +247,14 @@ function AxisGrid({
   }
   return (
     <div className="relative">
-      <div className="absolute inset-y-0 left-1/2 hidden border-l border-border md:block" />
+      {hasX && <div className="absolute inset-y-0 left-1/2 hidden border-l border-border md:block" />}
       <div className={GRID}>
         <div className={`col-span-2 hidden md:block ${SUBTITLE}`}>{title ? `Z axis ${title}` : "Z axis"}</div>
-        <div className={`col-span-2 hidden md:block ${SUBTITLE}`}>{title ? `X axis ${title}` : "X axis"}</div>
+        {hasX && <div className={`col-span-2 hidden md:block ${SUBTITLE}`}>{title ? `X axis ${title}` : "X axis"}</div>}
         {rows.flatMap((r, i) => [
           cell(r[0], "Z", `z0-${i}`),
           cell(r[1], "Z", `z1-${i}`),
-          cell(r[0], "X", `x0-${i}`),
-          cell(r[1], "X", `x1-${i}`),
+          ...(hasX ? [cell(r[0], "X", `x0-${i}`), cell(r[1], "X", `x1-${i}`)] : []),
         ])}
       </div>
     </div>

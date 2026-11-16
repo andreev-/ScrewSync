@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest"
 import {
   axisFields,
+  configFields,
+  inUnits,
   MACHINE_CONFIG_FIELDS,
   MACHINE_CONFIG_SECTIONS,
   parseMachineConfig,
+  sectionsForCapabilities,
+  sectionsInUnits,
   toDisplayValue,
   toRawValue,
   type MachineConfigField,
@@ -37,9 +41,9 @@ describe("machine config fields", () => {
     }
   })
 
-  it("have a valid range unless a checkbox", () => {
+  it("have a valid range unless a checkbox or a select", () => {
     for (const f of MACHINE_CONFIG_FIELDS) {
-      if (f.type === "checkbox") {
+      if (f.type) {
         continue
       }
       expect(f.min, f.key).toBeLessThan(f.max!)
@@ -89,11 +93,108 @@ describe("display and raw values", () => {
     expect(toRawValue(invert, false)).toBe("0")
   })
 
+  it("maps selects to their option values", () => {
+    const boot = field("bootState")
+    expect(boot.options!.map((o) => o.value)).toEqual([0, 1, 2])
+    expect(toDisplayValue(boot, "2")).toBe(2)
+    expect(toRawValue(boot, 1)).toBe("1")
+  })
+
   it("round-trips every scaled field at its limits", () => {
     for (const f of MACHINE_CONFIG_FIELDS.filter((x) => x.scale)) {
       for (const display of [f.min!, f.max!]) {
         expect(toDisplayValue(f, toRawValue(f, display)), f.key).toBeCloseTo(display, 4)
       }
     }
+  })
+})
+
+describe("speeds and accelerations", () => {
+  it("show mm/min and mm/s²", () => {
+    const rapid = field("speedRapidDuPerMinZ")
+    expect(rapid.unit).toBe("mm/min")
+    expect(toDisplayValue(rapid, "9600000")).toBe(960)
+    expect(toRawValue(rapid, 960)).toBe("9600000")
+    const accel = field("accelerationDuPerSec2X")
+    expect(accel.unit).toBe("mm/s²")
+    expect(toDisplayValue(accel, "125000")).toBe(12.5)
+  })
+
+  it("cover every speed and acceleration setting", () => {
+    const keys = MACHINE_CONFIG_FIELDS.filter((f) => f.rate).map((f) => f.key)
+    for (const axis of ["Z", "X"]) {
+      for (const name of ["speedStart", "speedRapid"]) {
+        expect(keys).toContain(`${name}DuPerMin${axis}`)
+      }
+      for (const name of ["acceleration", "deceleration"]) {
+        expect(keys).toContain(`${name}DuPerSec2${axis}`)
+      }
+    }
+    for (const axis of ["Z", "X"]) {
+      expect(keys).toContain(`homeFastDuPerMin${axis}`)
+      expect(keys).toContain(`homeSlowDuPerMin${axis}`)
+    }
+    expect(keys).toContain("probeFeedDuPerMin")
+    expect(keys).toContain("reprobeFeedDuPerMin")
+  })
+
+  it("show in/min and in/s² with inch units", () => {
+    const rapid = inUnits(field("speedRapidDuPerMinZ"), "inch")
+    expect(rapid.unit).toBe("in/min")
+    expect(toDisplayValue(rapid, "254000")).toBe(1)
+    expect(toRawValue(rapid, 1)).toBe("254000")
+    expect(inUnits(field("decelerationDuPerSec2Z"), "inch").unit).toBe("in/s²")
+  })
+
+  it("keep every other field with inch units", () => {
+    const pitch = field("screwPitchDuZ")
+    expect(inUnits(pitch, "inch")).toBe(pitch)
+    const rapid = field("speedRapidDuPerMinZ")
+    expect(inUnits(rapid, "mm")).toBe(rapid)
+  })
+
+  it("keep the keys of the sections with inch units", () => {
+    expect(configFields(sectionsInUnits("inch")).map((f) => f.key)).toEqual(MACHINE_CONFIG_FIELDS.map((f) => f.key))
+  })
+
+  it("round-trip at the limits with inch units", () => {
+    for (const f of configFields(sectionsInUnits("inch")).filter((x) => x.rate)) {
+      for (const display of [f.min!, f.max!]) {
+        expect(toDisplayValue(f, toRawValue(f, display)), f.key).toBeCloseTo(display, 4)
+      }
+    }
+  })
+
+  it("keep the same range in du with inch units", () => {
+    for (const f of MACHINE_CONFIG_FIELDS.filter((x) => x.rate)) {
+      const inch = inUnits(f, "inch")
+      expect(Number(toRawValue(inch, inch.max!)), f.key).toBe(Number(toRawValue(f, f.max!)))
+    }
+  })
+})
+
+describe("sections without end stops", () => {
+  const keys = (hasEndstops: boolean, units: "mm" | "inch" = "mm", hasProbe = true) =>
+    configFields(sectionsForCapabilities(sectionsInUnits(units), { has_endstops: hasEndstops, has_probe: hasProbe })).map((f) => f.key)
+
+  it("hide the max travel, the homing fields and require homing", () => {
+    const hidden = keys(false)
+    for (const key of ["maxTravelMmZ", "maxTravelMmX", "requireHoming", "homeFastDuPerMinZ", "homePositionDuX"]) {
+      expect(hidden).not.toContain(key)
+    }
+    expect(hidden).toContain("speedRapidDuPerMinZ")
+    expect(hidden).toContain("probeFeedDuPerMin")
+  })
+
+  it("hide the probe fields without a probe", () => {
+    const hidden = keys(true, "mm", false)
+    expect(hidden).not.toContain("probeFeedDuPerMin")
+    expect(hidden).not.toContain("probePolarityNc")
+    expect(hidden).toContain("speedRapidDuPerMinZ")
+  })
+
+  it("keep every field with end stops", () => {
+    expect(keys(true)).toEqual(MACHINE_CONFIG_FIELDS.map((f) => f.key))
+    expect(keys(true, "inch")).toEqual(MACHINE_CONFIG_FIELDS.map((f) => f.key))
   })
 })

@@ -18,6 +18,9 @@ connector pin from the web client, Pins page. No rebuild.
 - You can only save when the machine is idle and the map has no errors.
 - Click a connector name to rename it for your wiring. An empty name sets
   the board's name back.
+- The editor hides the functions of a feature that is off (X motor,
+  homing, probe). Saving the settings with a feature off removes its
+  functions from the saved map. See [manual.md](manual.md#features).
 - Some functions can have more than one assignment, for example two Stop
   switches. Contact on any Probe input is contact.
 
@@ -54,6 +57,22 @@ Each encoder has a filter, in µs:
   rules. A refused command shows as a toast on the display.
 - "Start here" starts without the "Go to zero first?" question.
 - "Go to zero" moves Z to 0, then X to 0 (the routine `o<zero>`).
+- "G54" to "G59" select the work coordinate system, like the display's
+  selector. Systems G55 to G59 need home inputs.
+
+## Home inputs
+
+- "Z home" and "X home" are one input each. They are not polled: each
+  edge raises an interrupt.
+- The default is a normally-open sensor. Set "invert" to match your
+  sensor.
+- If one axis motor has a home input, each present axis motor must have
+  one. Otherwise you cannot save the map.
+- A tailstock switch can share the X home input (wired together). While Z
+  homes, X is off its switch, so a signal on this input is the tailstock.
+- A signal on a home input while an axis moves trips the estop. When no axis
+  moves, the signal does nothing.
+- The "Home" switch sends `home`.
 
 ## Feed override encoder
 
@@ -75,9 +94,19 @@ Each encoder has a filter, in µs:
 - The step encoder counts one per quadrature cycle. To reverse it, invert
   A or B.
 
+## Estop input
+
+- "Estop" is one input each. You can add more than one, for example one
+  button at each end of the lathe. Each edge raises an interrupt.
+- The default is a normally-closed button. Set "invert" to match your
+  button.
+- An active input trips the estop. The axes stop at once.
+- While an estop input is active, `estop off` is refused.
+
 ## Outputs
 
 - "Running" is on while a job runs.
+- "Estop" is on while the machine is in estop.
 
 ## Faults and recovery
 

@@ -16,14 +16,14 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 #include "Backup.hpp"
+#include "Homing.hpp"
 #include "JsonSpan.hpp"
-#include "Machine.hpp"
+#include "Motion.hpp"
 #include "Mode.hpp"
 #include "Pins.hpp"
 #include "RunSettings.hpp"
 #include "Settings.hpp"
 #include "SettingsFields.hpp"
-#include "Stepper.hpp"
 #include "ThreadStore.hpp"
 #include <stdio.h>
 #include <string.h>
@@ -51,8 +51,6 @@ namespace
         const char *units;
         int32_t jogStepDu;
         const char *mode;
-        bool disabledZ;
-        bool disabledX;
         ModeJson modes[Mode::COUNT];
         size_t modeCount;
     };
@@ -80,8 +78,6 @@ namespace
         JSON_OBJ_DESCR_PRIM(RunJson, units, JSON_TOK_STRING),
         JSON_OBJ_DESCR_PRIM(RunJson, jogStepDu, JSON_TOK_NUMBER),
         JSON_OBJ_DESCR_PRIM(RunJson, mode, JSON_TOK_STRING),
-        JSON_OBJ_DESCR_PRIM(RunJson, disabledZ, JSON_TOK_TRUE),
-        JSON_OBJ_DESCR_PRIM(RunJson, disabledX, JSON_TOK_TRUE),
         JSON_OBJ_DESCR_OBJ_ARRAY(RunJson, modes, Mode::COUNT, modeCount, MODE_DESCR, ARRAY_SIZE(MODE_DESCR)),
     };
 
@@ -103,8 +99,6 @@ namespace
         run.units = RunSettings::unitsName();
         run.jogStepDu = RunSettings::jogStepDu();
         run.mode = Mode::name(Mode::current());
-        run.disabledZ = Stepper::isDisabled(Stepper::Axis::Z);
-        run.disabledX = Stepper::isDisabled(Stepper::Axis::X);
         run.modeCount = 0;
     }
 
@@ -139,8 +133,6 @@ namespace
     {
         RunSettings::setUnits(units);
         RunSettings::setJogStepDu(run.jogStepDu);
-        RunSettings::setAxisDisabled(Stepper::Axis::Z, run.disabledZ);
-        RunSettings::setAxisDisabled(Stepper::Axis::X, run.disabledX);
         for (size_t i = 0; i < run.modeCount; i++) {
             Mode::Id id;
             Mode::parse(run.modes[i].mode, id);
@@ -187,7 +179,7 @@ namespace Backup
 
     const char *fromJson(char *json, size_t len)
     {
-        if (Machine::state() != Machine::State::Idle || Mode::busy()) {
+        if (!Motion::configurable()) {
             return "machine not idle";
         }
         g_doc.settings = Settings::g_active;
@@ -199,8 +191,12 @@ namespace Backup
         char *settingsJson;
         size_t settingsLen;
         bool hasSettings = JsonSpan::findObject(json, len, "settings", settingsJson, settingsLen);
-        if (hasSettings && Settings::parseJson(settingsJson, settingsLen, g_doc.settings) < 0) {
-            return "bad json";
+        int64_t settingsMask = 0;
+        if (hasSettings) {
+            settingsMask = Settings::parseJson(settingsJson, settingsLen, g_doc.settings);
+            if (settingsMask < 0) {
+                return "bad json";
+            }
         }
         int64_t mask = json_obj_parse(json, len, PARSE_DESCR, ARRAY_SIZE(PARSE_DESCR), &g_doc);
         if (mask < 0 || (mask == 0 && !hasSettings && !hasPins)) {
@@ -234,6 +230,13 @@ namespace Backup
             }
         }
 
+        if (hasSettings) {
+            Settings::Wired wired = hasPins ? Settings::Wired{PinMap::wired(g_pins, PinMap::Feature::Homing),
+                                                              PinMap::wired(g_pins, PinMap::Feature::Probe)}
+                                            : Pins::savedWired();
+            Settings::applyFeatureDefaults(g_doc.settings, settingsMask, wired);
+        }
+
         // First, so that a failed save leaves everything unchanged.
         if (hasPins) {
             refusal = Pins::saveIfChanged(g_pins);
@@ -243,6 +246,7 @@ namespace Backup
             }
         }
         if (hasSettings) {
+            Homing::settingsChanged(Settings::g_active, g_doc.settings);
             Settings::replace(g_doc.settings);
         }
         if (hasRun) {

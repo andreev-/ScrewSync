@@ -79,10 +79,15 @@ and `<target>-flash`. See [design.md](design.md).
   resolution.
 - Each axis has separate acceleration and deceleration settings. Friction
   helps the motor stop, so deceleration can be higher than acceleration.
+- Speeds are in mm/min and accelerations in mm/s². With inch units, they
+  are in in/min and in/s².
 - -Z is toward the chuck and -X toward the centerline. If an axis moves the
   wrong way, toggle its `invertDirection` setting.
 - The spindle angle must increase when the spindle turns forward. If it
   decreases, toggle the `invertEncoder` setting.
+- Turn off the features that the machine does not have (X motor, homing,
+  probe) on the display (Settings) or the web client (Device page). A
+  change applies after a reboot. See [manual.md](manual.md#features).
 - Set the probe polarity (NO/NC) before the first probe. With a contact
   plate, touch the plate to the tool: the contact light must turn green.
 

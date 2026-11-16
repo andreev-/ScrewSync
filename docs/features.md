@@ -3,6 +3,8 @@
 ## Display
 
 - One page per mode, with every parameter of that mode visible and editable.
+- Header icons: estop, and with home switches, home and the work coordinate
+  selector.
 - Always visible: Z/X position, axis enable toggles, spindle RPM and angle,
   current mode, start/stop, mm/inch, jog buttons and jog step.
 - Numeric entry on an on-screen keypad with a computer numpad layout.
@@ -21,7 +23,7 @@
 - **Slot**: slot cutting with the spindle stopped.
 - **Ellipse**: quarter ellipse on the stock end, convex or concave.
 - **G-code**: see below.
-- **Probe**: see [probe.md](probe.md).
+- **Probe**: see [probe.md](probe.md). Needs only the probe, not the X motor.
 
 Multi-pass modes show the phase and pass number, and can skip a pass.
 
@@ -55,7 +57,8 @@ Multi-pass modes show the phase and pass number, and can skip a pass.
 - Programs are stored on the device and started from the display, which
   shows the preview, the tool position and step progress.
 - Linear moves, spindle-synchronized threading (G33; LatheCode G32),
-  G10 L20 position setting, and M0/M1 pauses.
+  G10 L20 position setting, work coordinate systems G54–G59 (with home
+  switches), G53, and M0/M1 pauses.
 - MDI: G-code lines on the web client or the serial console, with modes
   kept between lines. G38 probe moves.
 - LinuxCNC NGC: parameters, expressions, O-word subs, conditions and
@@ -64,6 +67,17 @@ Multi-pass modes show the phase and pass number, and can skip a pass.
   command.
 - Programs with the wrong axis directions are refused; the web client
   offers to flip them.
+
+## Homing
+
+- One home switch per axis. `home` homes X, then Z: fast pass, back off,
+  slow pass, pull off. Start it from the display, the Home switch or the
+  protocol.
+- Home inputs use interrupts. A tailstock switch can share the X input.
+- Speeds, back-off, pull-off and home position are settings per axis.
+- Optional "require homing": no moves until the axes are homed.
+- A homed axis has travel limits from its home position.
+- With home switches, work systems G54–G59 and saved offsets.
 
 ## Manual control
 
@@ -80,10 +94,24 @@ Multi-pass modes show the phase and pass number, and can skip a pass.
   spindle turns the wrong way.
 - Any jog on an axis a running job drives stops the job.
 - Starting a job off zero asks for confirmation.
-- Travel clamp per axis.
+- Boot state setting: start in estop, with estop off, or with estop off and
+  motors on. Estop stops all motion and turns the motors off, with no
+  restart. Estop icon on the display, estop inputs and an estop
+  output.
+- A home switch signal while an axis moves trips the estop.
 - A lost display link stops any running job or jog.
 - Firmware updates are refused while the machine is running.
 - Live feed override while running, in every cutting mode but Thread.
+
+## Feature switches
+
+- X motor, homing and probe can each be turned off, on the display or the
+  web client. A feature needs its switch on and its pins assigned.
+- A missing feature is hidden in the pin editor, the modes that need it and
+  the web client, and its commands are refused. The display keeps the X
+  column, with X off.
+- G-code with an X word (programs) or G38 is refused when that feature is
+  missing. Routines can skip parts with `#<_has_x>` and `#<_has_probe>`.
 
 ## Web client
 

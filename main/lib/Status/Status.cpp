@@ -16,6 +16,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 #include "Status.hpp"
+#include "Homing.hpp"
 #include "Machine.hpp"
 #include "Motion.hpp"
 #include "ProbeInput.hpp"
@@ -26,9 +27,11 @@
 
 namespace
 {
+    constexpr const char *WCS_NAMES[Wcs::COUNT] = {"G54", "G55", "G56", "G57", "G58", "G59"};
+
     Status::Axis axisStatus(Stepper::Axis axis)
     {
-        return {Wcs::position(axis), Stepper::isMoving(axis), !Stepper::isDisabled(axis)};
+        return {Wcs::position(axis), Stepper::isMoving(axis), !Stepper::isDisabled(axis) && !Stepper::unavailable(axis), Homing::homed(axis)};
     }
 }
 
@@ -52,6 +55,8 @@ namespace Status
         s.params[0] = '\0';
         Mode::describe(Mode::current(), s.params, sizeof(s.params));
         s.probeContact = ProbeInput::contact();
+        s.homing = Homing::active();
+        s.wcs = WCS_NAMES[Wcs::active()];
         s.rpm = Rpm::value();
         s.state = Machine::stateName();
         s.angleDeg = Motion::spindleAngleDeg();

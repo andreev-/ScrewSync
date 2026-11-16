@@ -19,8 +19,10 @@
 #include "ModeInternal.hpp"
 #include "ModeMath.hpp"
 #include "Events.hpp"
+#include "Machine.hpp"
 #include "Mode.hpp"
 #include "Motion.hpp"
+#include "Pins.hpp"
 #include "ProbeInput.hpp"
 #include "Rpm.hpp"
 #include "Settings.hpp"
@@ -43,7 +45,7 @@ namespace
 
     int64_t machineSteps(Stepper::Axis axis, const Gcode::Step &s)
     {
-        return duToSteps(axis, (double)Wcs::toMachine(axis, axis == Stepper::Axis::Z ? s.zDu : s.xDu));
+        return Machine::toSteps(axis, Wcs::toMachine(axis, axis == Stepper::Axis::Z ? s.zDu : s.xDu));
     }
 
     const char *clampReason(Stepper::Axis axis)
@@ -68,9 +70,8 @@ namespace
 
     void publishProbe(StepMotion &m, Stepper::Axis axis, bool found, int64_t pos, int64_t motor)
     {
-        int64_t machineDu = llround(stepsToDu(axis, pos));
-        Events::ProbeResult r = {(uint8_t)axis, found, machineDu - Wcs::offset(Wcs::active(), axis),
-                                 (int64_t)llround(stepsToDu(axis, motor))};
+        Events::ProbeResult r = {(uint8_t)axis, found, Machine::positionOf(axis, pos) - Wcs::offset(Wcs::active(), axis),
+                                 Machine::positionOf(axis, motor)};
         m.probeFound = found;
         m.probeTripDu = (int32_t)r.posDu;
         m.probeMotorDu = (int32_t)r.motorDu;
@@ -86,6 +87,15 @@ namespace
                 value = ProbeInput::contact() ? 1 : 0;
                 length = false;
                 live = true;
+                return true;
+            }
+            length = false;
+            if (!strcmp(name, "_has_x")) {
+                value = Stepper::unavailable(Stepper::Axis::X) ? 0 : 1;
+                return true;
+            }
+            if (!strcmp(name, "_has_probe")) {
+                value = Pins::unavailable(PinMap::Feature::Probe) ? 0 : 1;
                 return true;
             }
             return Settings::paramValue(name, Settings::g_active, value, length);
@@ -105,7 +115,10 @@ namespace
             g_latched = false;
             g_probeAxis = axis;
             g_watch = away ? Watch::Release : Watch::Contact;
-            if (ProbeInput::contact() != away) {
+            const char *unavailable = Pins::unavailable(PinMap::Feature::Probe);
+            if (unavailable) {
+                error = unavailable;
+            } else if (ProbeInput::contact() != away) {
                 error = away ? "no contact" : "contact present";
             } else if (Stepper::moveTo(axis, m.mainTo, duPerMinToStepsPerSec(axis, s.feed)) != m.mainTo) {
                 error = clampReason(axis);
@@ -177,11 +190,26 @@ namespace Mode::Detail
         return g_source;
     }
 
-    void applyMachineStep(const Gcode::Step &s)
+    Gcode::WcsState wcsState()
+    {
+        static_assert(Wcs::COUNT == Gcode::WCS_COUNT);
+        Gcode::WcsState state = {};
+        state.active = (uint8_t)Wcs::active();
+        for (size_t i = 0; i < Wcs::COUNT; i++) {
+            state.offsetDu[i][0] = (int32_t)Wcs::offset(i, Stepper::Axis::Z);
+            state.offsetDu[i][1] = (int32_t)Wcs::offset(i, Stepper::Axis::X);
+        }
+        return state;
+    }
+
+    const char *applyMachineStep(const Gcode::Step &s)
     {
         if (s.kind == Gcode::StepKind::SpindleAngle) {
             Motion::setSpindleAngle(s.feed / 1000.0);
-            return;
+            return nullptr;
+        }
+        if (s.kind == Gcode::StepKind::SelectWcs) {
+            return Wcs::select(s.wcs);
         }
         for (Stepper::Axis axis : {Stepper::Axis::Z, Stepper::Axis::X}) {
             bool isZ = axis == Stepper::Axis::Z;
@@ -190,11 +218,13 @@ namespace Mode::Detail
             }
             int32_t value = isZ ? s.zDu : s.xDu;
             if (s.kind == Gcode::StepKind::SetPosition) {
-                Wcs::setPosition(axis, value);
-            } else if (s.kind == Gcode::StepKind::Motors) {
-                Motion::setAxisEnabled(axis, value != 0);
+                const char *refusal = Wcs::setPosition(s.wcs, axis, value);
+                if (refusal) {
+                    return refusal;
+                }
             }
         }
+        return nullptr;
     }
 
     void StepMotion::begin(const Gcode::Step &s, int64_t spindlePos)

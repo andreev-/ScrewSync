@@ -9,7 +9,12 @@ $(1)_TFT := $(CURDIR)/.build/release/$(1)/display.tft
 $(1)_TFT_180 := $(CURDIR)/.build/release/$(1)/display_180.tft
 $(1)_180_SRC := $(CURDIR)/.build/$(1)_180
 
-.PHONY: $(1)-build $(1)-serial $(1)-screenshots
+NEXTION_CHECKS += $(1)-check
+
+.PHONY: $(1)-check $(1)-build $(1)-serial $(1)-screenshots
+
+$(1)-check:
+	$$(NXWRIGHT) check $$($(1)_DIR)
 
 $(1)-build:
 	$$(NXWRIGHT) check $$($(1)_DIR)
@@ -18,7 +23,7 @@ $(1)-build:
 	$$(NXWRIGHT) compile $$($(1)_OUT)/display.HMI $$($(1)_TFT) --overwrite --no-backup $$(NXWRIGHT_COMPILE_ARGS)
 	rm -rf $(CURDIR)/.build/$(1)_180
 	mkdir -p $$($(1)_180_SRC)
-	cp -r $$($(1)_DIR)/app.toml $$($(1)_DIR)/defaults.toml $$($(1)_DIR)/program.nx $$($(1)_DIR)/pages $$($(1)_DIR)/fonts $$($(1)_180_SRC)
+	cp -r $$($(1)_DIR)/app.toml $$($(1)_DIR)/defaults.toml $$($(1)_DIR)/program.nx $$($(1)_DIR)/pages $$($(1)_DIR)/fonts $$($(1)_DIR)/pictures $$($(1)_180_SRC)
 	sed -i 's/^rotation = .*/rotation = 180/' $$($(1)_180_SRC)/app.toml
 	$$(NXWRIGHT) build $$($(1)_180_SRC) $$($(1)_OUT)/display_180.HMI --overwrite --no-backup
 	$$(NXWRIGHT) compile $$($(1)_OUT)/display_180.HMI $$($(1)_TFT_180) --overwrite --no-backup $$(NXWRIGHT_COMPILE_ARGS)
@@ -38,6 +43,8 @@ $(1)_IMAGES += $$($(1)_DISPLAY_PARTITION):$(CURDIR)/.build/$(1)/display.bin
 $(1)_BACKUP_REGIONS += $$($(1)_DISPLAY_PARTITION):$$($(1)_DISPLAY_PARTITION_SIZE)
 
 .PHONY: $(1)-display-image
+
+$(1)-build $(1)-build-debug-mcuboot: $$($(1)_DISPLAY)-build
 
 $(1)-display-image:
 	python3 scripts/pack_display_image.py $$($$($(1)_DISPLAY)_TFT) $(CURDIR)/.build/$(1)/display.bin

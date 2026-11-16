@@ -47,6 +47,7 @@ export interface FunctionDef {
   filterUs: number
   /** Encoder top speed for the edge rate check. 0 = not checked. */
   maxRpm?: number
+  features?: string[]
 }
 
 export interface SignalOptions {
@@ -289,6 +290,13 @@ export function validate(board: Board, map: PinMap): Issue[] {
       issues.push({ level: "error", fn: fn.id, msg: `${fn.label} has no pins` })
     }
   }
+  const hasHome = map.some((a) => a.fn === "zHome" || a.fn === "xHome")
+  for (const [motor, home] of [["zMotor", "zHome"], ["xMotor", "xHome"]]) {
+    const homeFn = functionDef(board, home)
+    if (hasHome && homeFn && map.some((a) => a.fn === motor) && !map.some((a) => a.fn === home)) {
+      issues.push({ level: "error", fn: home, msg: `${homeFn.label} has no pins` })
+    }
+  }
   map.forEach((a, index) => {
     const fn = functionDef(board, a.fn)
     if (!fn) {
@@ -389,6 +397,7 @@ export interface PinFunctionsJson {
     encoders: EncoderType[]
     filterUs: number
     maxRpm?: number
+    features?: string[]
   }[]
 }
 
@@ -421,6 +430,7 @@ export function fromPinsJson(doc: PinsJson, fns: PinFunctionsJson): { board: Boa
       encoderTypes: f.encoders.length ? f.encoders : undefined,
       filterUs: f.filterUs,
       maxRpm: f.maxRpm,
+      features: f.features,
     })),
     name: doc.board.name,
     pcntUnits: doc.board.pcntUnits,

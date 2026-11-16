@@ -18,6 +18,7 @@
 #include "Command.hpp"
 #include "CommandInternal.hpp"
 #include "GcodeMdi.hpp"
+#include "Homing.hpp"
 #include "Machine.hpp"
 #include "Mode.hpp"
 #include "Motion.hpp"
@@ -49,12 +50,58 @@ namespace
 
     void estop(const char *args, char *out, size_t outMax)
     {
-        if (!strcmp(skipSpaces(args), "ack")) {
-            snprintf(out, outMax, "ok estop ack, rebooting");
-            Machine::ackEstop();
+        const char *arg = skipSpaces(args);
+        if (!strcmp(arg, "off")) {
+            if (Machine::estopOff()) {
+                snprintf(out, outMax, "ok estop off");
+            } else {
+                snprintf(out, outMax, "err busy: estop input active");
+            }
+        } else if (!strcmp(arg, "on")) {
+            Machine::estopNow();
+            snprintf(out, outMax, "ok estop on");
         } else {
             snprintf(out, outMax, "ok state=%s", Machine::stateName());
         }
+    }
+
+    void power(const char *args, char *out, size_t outMax)
+    {
+        const char *a = skipSpaces(args);
+        bool on = !strncmp(a, "on", 2) && (a[2] == '\0' || a[2] == ' ');
+        bool off = !strncmp(a, "off", 3) && (a[3] == '\0' || a[3] == ' ');
+        if (!on && !off) {
+            snprintf(out, outMax, "err power on|off [z|x]");
+            return;
+        }
+        const char *axisTok = skipSpaces(a + (on ? 2 : 3));
+        bool z = !*axisTok || !strcmp(axisTok, "z");
+        bool x = !*axisTok || !strcmp(axisTok, "x");
+        if (!z && !x) {
+            snprintf(out, outMax, "err power on|off [z|x]");
+            return;
+        }
+        const char *unavailable = *axisTok && x ? Stepper::unavailable(Stepper::Axis::X) : nullptr;
+        if (unavailable) {
+            snprintf(out, outMax, "err %s", unavailable);
+            return;
+        }
+        if (on && Machine::state() == Machine::State::EStop) {
+            snprintf(out, outMax, "err busy: estop");
+            return;
+        }
+        if (z) {
+            Motion::setAxisEnabled(Stepper::Axis::Z, on);
+        }
+        if (x) {
+            Motion::setAxisEnabled(Stepper::Axis::X, on);
+        }
+        snprintf(out, outMax, "ok power %s", on ? "on" : "off");
+    }
+
+    void home(const char *, char *out, size_t outMax)
+    {
+        reply(out, outMax, Homing::start(), "ok %s", "homing");
     }
 
     void commands(const char *, char *out, size_t outMax);
@@ -62,16 +109,18 @@ namespace
     const CommandDef COMMANDS[] = {
         {"ping", "ping", "replies pong", ping},
         {"reboot", "reboot", "restarts the controller", reboot},
-        {"estop", "estop | estop ack", "machine state query / clears a tripped estop and reboots", estop},
+        {"estop", "estop | estop on | estop off", "machine state query / trips the estop / clears the estop", estop},
+        {"power", "power on|off [z|x]", "motors on or off, both axes without an axis", power},
         {"wifi",
          "wifi status|list|scan|on|off|forget | add <name> [pass] | ssid <name> [pass] | "
          "del <name|idx> | use <name|idx> | ap on|off | fallback on|off",
          "WiFi AP+STA control", wifi},
         {"settings", "settings get | set <field> <value> | set-all <json> | reset", "machine config storage", settings},
-        {"jog", "jog step [<deci-microns>|next] | z|x +|- [hold|release] | resolution <multiplier> | speed <steps/sec|0> | status",
-         "jog buttons (tap = one step, repeated hold = continuous, release = stop), handwheel resolution/speed", jog},
+        {"jog", "jog step [<deci-microns>|next] | z|x +|- [hold|release] | speed <du/min|0> | status",
+         "jog buttons (tap = one step, repeated hold = continuous, release = stop), jog speed", jog},
         {"mode", "mode [<name>|status]", "selects the operating mode (refused while running)", mode},
         {"start", "start [zero]", "starts the selected mode; zero = rapid Z then X to 0 first", start},
+        {"home", "home", "homes the axes, X then Z", home},
         {"stop", "stop", "stops the mode and decelerates both axes", stop},
         {"skip", "skip", "running multi-pass mode: skips the next pass", skip},
         {"override", "override [status] | + | - | reset", "feed override of the running job, percent", override},
@@ -160,6 +209,9 @@ namespace Command::Detail
         if (tokLen == 5 && !strncmp(token, "start", 5)) {
             return true;
         }
+        if (tokLen == 4 && !strncmp(token, "home", 4)) {
+            return true;
+        }
         if (tokLen == 3 && !strncmp(token, "jog", 3)) {
             return (args[0] == 'z' || args[0] == 'x') && args[1] == ' ';
         }
@@ -168,7 +220,7 @@ namespace Command::Detail
 
     bool refuseUnlessIdle(char *out, size_t outMax)
     {
-        if (Motion::idle()) {
+        if (Motion::configurable()) {
             return false;
         }
         snprintf(out, outMax, "err machine not idle");
@@ -186,22 +238,28 @@ namespace Command
         const char *a = skipSpaces(line);
         size_t tokLen = strcspn(a, " ");
 
-        // "estop ack" is the only way out of a trip, on every transport.
         Machine::State st = Machine::state();
-        bool isEstop = tokLen == 5 && !strncmp(a, "estop", 5);
         if (st == Machine::State::Flashing) {
             snprintf(out, outMax, "err busy: flashing");
-            return;
-        }
-        if (st == Machine::State::EStop && !isEstop) {
-            snprintf(out, outMax, "err busy: estop");
             return;
         }
 
         const char *pinsFault = Pins::fault();
         bool ui = *a == Gcode::MDI_UI_MARKER;
         const char *gcode = ui ? a + 1 : a;
-        if (Gcode::isMdiLine(gcode)) {
+        bool isMdi = Gcode::isMdiLine(gcode);
+        bool isCall = (*a == 'o' || *a == 'O') && a[1] == '<';
+        bool isJog = tokLen == 3 && !strncmp(a, "jog", 3);
+        if (st == Machine::State::EStop && (isMdi || isCall || isJog || startsMotion(a, tokLen, a + tokLen))) {
+            snprintf(out, outMax, "err busy: estop");
+            return;
+        }
+        bool isHome = tokLen == 4 && !strncmp(a, "home", 4);
+        if (Homing::blocked() && (isCall || isJog || (startsMotion(a, tokLen, a + tokLen) && !isHome))) {
+            snprintf(out, outMax, "err not homed");
+            return;
+        }
+        if (isMdi) {
             const char *refusal = pinsFault ? pinsFault : Mode::mdi(gcode, ui);
             if (refusal) {
                 snprintf(out, outMax, "err %s%s", pinsFault ? "pins: " : "", refusal);
@@ -210,7 +268,7 @@ namespace Command
             }
             return;
         }
-        if ((*a == 'o' || *a == 'O') && a[1] == '<') {
+        if (isCall) {
             const char *refusal = pinsFault ? pinsFault : Mode::call(a);
             if (refusal) {
                 snprintf(out, outMax, "err %s%s", pinsFault ? "pins: " : "", refusal);

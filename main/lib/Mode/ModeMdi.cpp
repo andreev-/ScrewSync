@@ -19,6 +19,7 @@
 #include "ModeSteps.hpp"
 #include "GcodeDialects.hpp"
 #include "GcodeMdi.hpp"
+#include "Homing.hpp"
 #include "Wcs.hpp"
 #include <zephyr/logging/log.h>
 #include <initializer_list>
@@ -62,27 +63,18 @@ namespace
         return axis == Stepper::Axis::Z ? s.zDu : s.xDu;
     }
 
-    // The last queued M100 for the axis turns it on.
-    bool enableQueued(Stepper::Axis axis)
-    {
-        bool on = false;
-        for (size_t i = 0; i < g_count; i++) {
-            const Gcode::Step &s = g_queue[(g_head + i) % QUEUE_LEN];
-            if (s.kind == Gcode::StepKind::Motors && (s.axes & bit(axis))) {
-                on = (axis == Stepper::Axis::Z ? s.zDu : s.xDu) != 0;
-            }
-        }
-        return on;
-    }
-
-    // Marks the axes each motion step moves, starting from z/x, and claims
-    // both axes. A disabled axis is not claimed; it is refused if it moves
-    // and no queued M100 turns it on.
-    const char *claimMoved(LineSteps &line, int32_t z, int32_t x)
+    // Marks the axes each motion step moves, starting from z/x in system active, and claims
+    // both axes. A disabled axis is not claimed; it is refused if it moves.
+    const char *claimMoved(LineSteps &line, int32_t z, int32_t x, uint8_t active)
     {
         for (size_t i = 0; i < line.count; i++) {
             Gcode::Step &s = line.steps[i];
-            if (s.kind == Gcode::StepKind::SetPosition) {
+            if (s.kind == Gcode::StepKind::SelectWcs) {
+                active = s.wcs;
+                z = s.zDu;
+                x = s.xDu;
+            }
+            if (s.kind == Gcode::StepKind::SetPosition && s.wcs == active) {
                 z = s.zDu;
                 x = s.xDu;
             }
@@ -91,9 +83,13 @@ namespace
             }
             s.axes = (s.zDu != z ? Gcode::AXIS_Z : 0) | (s.xDu != x ? Gcode::AXIS_X : 0);
             for (Stepper::Axis axis : AXES) {
+                const char *unavailable = (s.axes & bit(axis)) ? Stepper::unavailable(axis) : nullptr;
+                if (unavailable) {
+                    return unavailable;
+                }
                 if (!Stepper::isDisabled(axis)) {
                     claim(axis);
-                } else if ((s.axes & bit(axis)) && !enableQueued(axis)) {
+                } else if (s.axes & bit(axis)) {
                     return "axis disabled";
                 }
             }
@@ -158,8 +154,11 @@ namespace Mode::Detail
         if (!isMotion(s.kind)) {
             Gcode::Step step = s;
             pop();
-            // M100 off on a held axis stops and clears MDI, as "enable off" does.
-            applyMachineStep(step);
+            const char *refusal = applyMachineStep(step);
+            if (refusal) {
+                fail(refusal);
+                return;
+            }
             if (!g_count) {
                 releaseAxes();
             }
@@ -211,6 +210,9 @@ namespace Mode
         if (running()) {
             return "mode running, stop first";
         }
+        if (Homing::active()) {
+            return "homing";
+        }
         // The end position of a G38 move is not known until it ends.
         for (size_t i = 0; i < g_count; i++) {
             if (g_queue[(g_head + i) % QUEUE_LEN].kind == Gcode::StepKind::Probe) {
@@ -220,6 +222,7 @@ namespace Mode
         // Jog, handwheel, modes and programs move the axes between MDI lines.
         if (!g_count) {
             g_session.setPosition((int32_t)Wcs::position(Stepper::Axis::Z), (int32_t)Wcs::position(Stepper::Axis::X));
+            g_session.setWcs(wcsState());
         }
         Gcode::Mdi saved = g_session;
         LineSteps steps;
@@ -227,7 +230,13 @@ namespace Mode
         if (err) {
             return err;
         }
-        err = claimMoved(steps, saved.zDu(), saved.xDu());
+        for (size_t i = 0; i < steps.count && Homing::blocked(); i++) {
+            if (Detail::isMotion(steps.steps[i].kind)) {
+                g_session = saved;
+                return "not homed";
+            }
+        }
+        err = claimMoved(steps, saved.zDu(), saved.xDu(), saved.wcsActive());
         if (err) {
             g_session = saved;
             if (!g_count) {

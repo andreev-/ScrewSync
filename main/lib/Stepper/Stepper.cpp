@@ -59,8 +59,8 @@ namespace
         int64_t motorPos; // actual stepper shaft position; trails currentPos by
                            // up to backlashSteps right after a direction reversal
         int32_t currentSpeed;  // steps/sec
-        int32_t speedOverride; // steps/sec, 0 = use cfg->speedRapid
-        int32_t moveMaxSpeed;  // steps/sec, 0 = speedOverride/speedRapid
+        int32_t speedOverride; // steps/sec, 0 = use cfg->speedRapidSteps
+        int32_t moveMaxSpeed;  // steps/sec, 0 = speedOverride/speedRapidSteps
         bool dirLevel; // last direction written (true = positive)
         bool dirValid;
         bool running;
@@ -69,6 +69,9 @@ namespace
         int32_t speedRemainderMicro = 0;
         bool followMove = false;
         bool braking = false; // follow move slowing down past or away from its target
+        bool windowSet = false;
+        int64_t windowMin = 0;
+        int64_t windowMax = 0;
     };
 
     AxisState g_axisZ = {
@@ -137,7 +140,7 @@ namespace
 
     int32_t rapidSpeedOf(const AxisState &s)
     {
-        return s.speedOverride != 0 ? s.speedOverride : s.cfg->speedRapid;
+        return s.speedOverride != 0 ? s.speedOverride : s.cfg->speedRapidSteps;
     }
 
     int32_t maxSpeedOf(const AxisState &s)
@@ -148,7 +151,7 @@ namespace
     int32_t startSpeedOf(const AxisState &s)
     {
         int32_t maxSpeed = maxSpeedOf(s);
-        return s.cfg->speedStart < maxSpeed ? s.cfg->speedStart : maxSpeed;
+        return s.cfg->speedStartSteps < maxSpeed ? s.cfg->speedStartSteps : maxSpeed;
     }
 
     void armNext(AxisState &s, uint32_t periodUs);
@@ -181,16 +184,18 @@ namespace
         k_work_submit(&s == &g_axisZ ? &g_arrivedZ : &g_arrivedX);
     }
 
-    int64_t moveToLocked(AxisState &s, int64_t targetSteps, int32_t maxSpeed, bool follow = false)
+    volatile bool g_homingOnly = false;
+
+    int64_t moveToLocked(AxisState &s, int64_t targetSteps, int32_t maxSpeed, bool follow = false, bool homing = false)
     {
         // The one choke point for every mover (Jog/Sync both drive through
-        // here, same as the travel clamp below) -- while flashing/estopped
-        // or manually disabled, pin the target to the current position
+        // here, same as the travel clamp below) -- while flashing/estopped,
+        // manually disabled or homing-only, pin the target to the current position
         // instead of accepting a new one, so an in-flight ramp sees zero
         // distance remaining and stops on its very next tick.
         Machine::State ms = Machine::state();
         s.braking = false;
-        if (ms == Machine::State::Flashing || ms == Machine::State::EStop || s.disabled || !hasPins(s)) {
+        if (ms == Machine::State::Flashing || ms == Machine::State::EStop || s.disabled || !hasPins(s) || (g_homingOnly && !homing)) {
             s.targetPos = s.currentPos;
             s.followMove = false;
             return s.targetPos;
@@ -198,8 +203,9 @@ namespace
 
         s.followMove = follow;
         s.moveMaxSpeed = maxSpeed < 0 ? 0 : maxSpeed;
-        int64_t maxSteps = Stepper::maxTravelSteps(s.cfg->maxTravelMm, s.cfg->motorSteps, s.cfg->screwPitchDu);
-        targetSteps = Stepper::clampToTravel(targetSteps, maxSteps);
+        if (s.windowSet) {
+            targetSteps = Stepper::clampToWindow(targetSteps, s.windowMin, s.windowMax);
+        }
         s.targetPos = targetSteps;
         if (!s.running && targetSteps != s.currentPos) {
             s.running = true;
@@ -229,8 +235,8 @@ namespace
         if (direction == 0) {
             return;
         }
-        int64_t distance = Stepper::stoppingDistance(s.currentSpeed, s.cfg->deceleration);
-        moveToLocked(s, s.currentPos + direction * distance, s.moveMaxSpeed);
+        int64_t distance = Stepper::stoppingDistance(s.currentSpeed, s.cfg->decelerationSteps);
+        moveToLocked(s, s.currentPos + direction * distance, s.moveMaxSpeed, false, true);
     }
 
     void armNext(AxisState &s, uint32_t periodUs)
@@ -269,7 +275,7 @@ namespace
 
             if (s.braking) {
                 s.targetPos = s.currentPos;
-                s.currentSpeed = Stepper::brakeSpeed(s.currentSpeed, s.cfg->deceleration, startSpeedOf(s),
+                s.currentSpeed = Stepper::brakeSpeed(s.currentSpeed, s.cfg->decelerationSteps, startSpeedOf(s),
                                                      s.speedRemainderMicro);
                 if (s.currentSpeed <= startSpeedOf(s)) {
                     endMove(s);
@@ -290,12 +296,12 @@ namespace
             }
 
             int32_t brakeRemainder = s.speedRemainderMicro;
-            int32_t speed = Stepper::nextRampSpeed(s.currentSpeed, distRemaining, s.cfg->acceleration,
-                                                   s.cfg->deceleration, s.cfg->speedStart, maxSpeedOf(s),
+            int32_t speed = Stepper::nextRampSpeed(s.currentSpeed, distRemaining, s.cfg->accelerationSteps,
+                                                   s.cfg->decelerationSteps, s.cfg->speedStartSteps, maxSpeedOf(s),
                                                    s.speedRemainderMicro);
             if (s.followMove) {
                 int32_t gentlest =
-                    Stepper::brakeSpeed(s.currentSpeed, s.cfg->deceleration, startSpeedOf(s), brakeRemainder);
+                    Stepper::brakeSpeed(s.currentSpeed, s.cfg->decelerationSteps, startSpeedOf(s), brakeRemainder);
                 if (speed < gentlest) {
                     speed = gentlest;
                     s.speedRemainderMicro = brakeRemainder;
@@ -342,8 +348,7 @@ namespace Stepper
             }
             counter_start(s->timer);
 
-            // setDisabled() re-runs this with the state restored from NVS
-            // right after begin(), before any move.
+            // setDisabled() re-runs this right after begin(), before any move.
             reconcile(*s);
         }
     }
@@ -379,6 +384,11 @@ namespace Stepper
         k_spin_unlock(&s.lock, key);
     }
 
+    const char *unavailable(Axis axis)
+    {
+        return axis == Axis::X ? Pins::unavailable(PinMap::Feature::XMotor) : nullptr;
+    }
+
     bool isDisabled(Axis axis)
     {
         AxisState &s = stateOf(axis);
@@ -397,11 +407,16 @@ namespace Stepper
         return held;
     }
 
-    int64_t moveTo(Axis axis, int64_t targetSteps, int32_t maxSpeed)
+    void setHomingOnly(bool on)
+    {
+        g_homingOnly = on;
+    }
+
+    int64_t moveTo(Axis axis, int64_t targetSteps, int32_t maxSpeed, bool homing)
     {
         AxisState &s = stateOf(axis);
         k_spinlock_key_t key = k_spin_lock(&s.lock);
-        int64_t accepted = moveToLocked(s, targetSteps, maxSpeed);
+        int64_t accepted = moveToLocked(s, targetSteps, maxSpeed, false, homing);
         k_spin_unlock(&s.lock, key);
         return accepted;
     }
@@ -446,8 +461,8 @@ namespace Stepper
             k_spin_unlock(&s.lock, key);
             return;
         }
-        int32_t speed = moving != 0 ? s.currentSpeed : s.cfg->speedStart;
-        int64_t ahead = s.currentPos + direction * runAheadDistance(speed, s.cfg->acceleration, s.cfg->deceleration,
+        int32_t speed = moving != 0 ? s.currentSpeed : s.cfg->speedStartSteps;
+        int64_t ahead = s.currentPos + direction * runAheadDistance(speed, s.cfg->accelerationSteps, s.cfg->decelerationSteps,
                                                                     maxSpeedOf(s), horizonUs);
         bool alreadyFurther = moving != 0 && (direction > 0 ? s.targetPos >= ahead : s.targetPos <= ahead);
         if (!alreadyFurther) {
@@ -461,6 +476,24 @@ namespace Stepper
         AxisState &s = stateOf(axis);
         k_spinlock_key_t key = k_spin_lock(&s.lock);
         stopLocked(s);
+        k_spin_unlock(&s.lock, key);
+    }
+
+    void setTravelWindow(Axis axis, int64_t minSteps, int64_t maxSteps)
+    {
+        AxisState &s = stateOf(axis);
+        k_spinlock_key_t key = k_spin_lock(&s.lock);
+        s.windowSet = true;
+        s.windowMin = minSteps;
+        s.windowMax = maxSteps;
+        k_spin_unlock(&s.lock, key);
+    }
+
+    void clearTravelWindow(Axis axis)
+    {
+        AxisState &s = stateOf(axis);
+        k_spinlock_key_t key = k_spin_lock(&s.lock);
+        s.windowSet = false;
         k_spin_unlock(&s.lock, key);
     }
 

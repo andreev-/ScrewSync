@@ -41,14 +41,24 @@ namespace PinMap
         {"zHandwheel", "Z handwheel", "Encoders", 2, {"A", "B"}, Dir::In, false, true, true, true, false, false, nullptr, MAX_HW_FILTER_NS, HANDWHEEL_MAX_RPM},
         {"xHandwheel", "X handwheel", "Encoders", 2, {"A", "B"}, Dir::In, false, true, true, true, false, false, nullptr, MAX_HW_FILTER_NS, HANDWHEEL_MAX_RPM},
         {"probe", "Probe", "Cycle", 1, {"SIG"}, Dir::In, false, false, false, false, false, false, nullptr, 0, 0},
+        {"estop", "Estop", "Cycle", 1, {"SIG"}, Dir::In, false, false, false, false, false, false, nullptr, 0, 0},
+        {"zHome", "Z home", "Homing", 1, {"SIG"}, Dir::In, false, true, false, false, false, true, nullptr, 0, 0},
+        {"xHome", "X home", "Homing", 1, {"SIG"}, Dir::In, false, true, false, false, false, true, nullptr, 0, 0},
         SWITCH("startHere", "Start here", "start"),
         SWITCH("stop", "Stop", "stop"),
-        ZERO_SWITCH("setZero", "Set zero", "@G10 L20 P1 Z0 X0"),
-        ZERO_SWITCH("setZeroZ", "Set zero Z", "@G10 L20 P1 Z0"),
-        ZERO_SWITCH("setZeroX", "Set zero X", "@G10 L20 P1 X0"),
+        SWITCH_IN("Homing", "home", "Home", "home"),
+        ZERO_SWITCH("setZero", "Set zero", "@G10 L20 P0 Z0 X0"),
+        ZERO_SWITCH("setZeroZ", "Set zero Z", "@G10 L20 P0 Z0"),
+        ZERO_SWITCH("setZeroX", "Set zero X", "@G10 L20 P0 X0"),
         ZERO_SWITCH("goToZero", "Go to zero", "o<zero> call [1] [1]"),
         ZERO_SWITCH("goToZeroZ", "Go to zero Z", "o<zero> call [1] [0]"),
         ZERO_SWITCH("goToZeroX", "Go to zero X", "o<zero> call [0] [1]"),
+        ZERO_SWITCH("g54", "G54", "@G54"),
+        ZERO_SWITCH("g55", "G55", "@G55"),
+        ZERO_SWITCH("g56", "G56", "@G56"),
+        ZERO_SWITCH("g57", "G57", "@G57"),
+        ZERO_SWITCH("g58", "G58", "@G58"),
+        ZERO_SWITCH("g59", "G59", "@G59"),
         FEED_SWITCH("feedReset", "Feed override reset", "override reset"),
         FEED_SWITCH("feedUp", "Feed +", "override +"),
         FEED_SWITCH("feedDown", "Feed -", "override -"),
@@ -68,7 +78,8 @@ namespace PinMap
         MODE_SWITCH("modeEllipse", "Mode ellipse", "mode ellipse"),
         MODE_SWITCH("modeGcode", "Mode G-code", "mode gcode"),
         MODE_SWITCH("modeProbe", "Mode probe", "mode probe"),
-        {"running", "Running", "Outputs", 1, {"SIG"}, Dir::Out, false, false, false, false, false, false, nullptr, 0, 0},
+        {"runningOut", "Running", "Outputs", 1, {"SIG"}, Dir::Out, false, false, false, false, false, false, nullptr, 0, 0},
+        {"estopOut", "Estop", "Outputs", 1, {"SIG"}, Dir::Out, false, false, false, false, false, false, nullptr, 0, 0},
     };
 #undef FEED_SWITCH
 #undef ZERO_SWITCH
@@ -127,6 +138,77 @@ namespace PinMap
             n += map.list[i].fn == fn;
         }
         return n;
+    }
+
+    uint8_t featuresOf(Fn fn)
+    {
+        constexpr uint8_t X = featureBit(Feature::XMotor);
+        constexpr uint8_t HOME = featureBit(Feature::Homing);
+        constexpr uint8_t PROBE = featureBit(Feature::Probe);
+        switch (fn) {
+        case Fn::XMotor:
+        case Fn::XHandwheel:
+        case Fn::SetZeroX:
+        case Fn::GoToZeroX:
+        case Fn::JogXPlus:
+        case Fn::JogXMinus:
+        case Fn::ModeTurn:
+        case Fn::ModeThread:
+        case Fn::ModePart:
+        case Fn::ModeSlot:
+        case Fn::ModeEllipse:
+            return X;
+        case Fn::XHome:
+            return X | HOME;
+        case Fn::ZHome:
+        case Fn::Home:
+            return HOME;
+        case Fn::Probe:
+        case Fn::ModeProbe:
+            return PROBE;
+        default:
+            return 0;
+        }
+    }
+
+    const char *featureId(Feature feature)
+    {
+        static const char *const IDS[FEATURE_COUNT] = {"xMotor", "homing", "probe"};
+        return IDS[(size_t)feature];
+    }
+
+    const char *featureLabel(Feature feature)
+    {
+        static const char *const LABELS[FEATURE_COUNT] = {"X motor", "homing", "probe"};
+        return LABELS[(size_t)feature];
+    }
+
+    bool wired(const Map &map, Feature feature)
+    {
+        switch (feature) {
+        case Feature::XMotor:
+            return find(map, Fn::XMotor) != nullptr;
+        case Feature::Homing:
+            return find(map, Fn::ZHome) || find(map, Fn::XHome);
+        default:
+            return find(map, Fn::Probe) != nullptr;
+        }
+    }
+
+    bool removeFeatures(Map &map, uint8_t mask)
+    {
+        size_t kept = 0;
+        for (size_t i = 0; i < map.count; i++) {
+            if (!(featuresOf(map.list[i].fn) & mask)) {
+                map.list[kept++] = map.list[i];
+            }
+        }
+        bool removed = kept != map.count;
+        for (size_t i = kept; i < map.count; i++) {
+            map.list[i] = {};
+        }
+        map.count = kept;
+        return removed;
     }
 
     bool add(Map &map, const Assignment &a)
@@ -299,6 +381,22 @@ namespace PinMap
         return nullptr;
     }
 
+    const char *missingHome(const Map &map, char *err, size_t errMax)
+    {
+        const Fn motors[] = {Fn::ZMotor, Fn::XMotor};
+        const Fn homes[] = {Fn::ZHome, Fn::XHome};
+        if (!find(map, homes[0]) && !find(map, homes[1])) {
+            return nullptr;
+        }
+        for (size_t i = 0; i < 2; i++) {
+            if (find(map, motors[i]) && !find(map, homes[i])) {
+                snprintf(err, errMax, "%s has no pins", def(homes[i]).label);
+                return err;
+            }
+        }
+        return nullptr;
+    }
+
     const char *checkEdgeRate(const Board &board, const Assignment &a, char *err, size_t errMax)
     {
         if ((size_t)a.fn >= FN_COUNT || a.encoder == Encoder::None) {
@@ -336,7 +434,7 @@ namespace PinMap
                 return err;
             }
         }
-        if (missingRequired(map, err, errMax)) {
+        if (missingRequired(map, err, errMax) || missingHome(map, err, errMax)) {
             return err;
         }
         for (size_t c = 0; c < MAX_CONNECTORS; c++) {

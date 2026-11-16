@@ -6,6 +6,8 @@ How to operate ScrewSync. For connectors and flashing, see
 ## First setup
 
 - Machine settings are on the web client only. See [Wi-Fi](#wi-fi).
+- The settings show speeds in mm/min and accelerations in mm/s². With
+  inch units, they show in/min and in/s².
 - Axis directions: -Z moves toward the chuck, -X moves toward the
   centerline (ISO 841). If an axis moves the wrong way, toggle
   `invertDirectionZ` or `invertDirectionX`.
@@ -39,16 +41,39 @@ How to operate ScrewSync. For connectors and flashing, see
   its toggle, position, →0 button and jog buttons, and the jog step.
 - Tap the mode name to open the menu: the modes and Settings. The rest of
   the screen shows the page of the selected mode.
-- Settings on the display: units (mm/inch), pitch entry (Pitch/TPI), and
-  Network (Wi-Fi On/Off, Force AP, status, IP).
+- Settings on the display: units (mm/inch), pitch entry (Pitch/TPI),
+  Network (Wi-Fi On/Off, Force AP, status, IP), and the feature switches
+  (see [Features](#features)).
+- Header icons: estop, and with home switches, home and the work coordinate
+  selector. See [Estop](#estop), [Homing](#homing) and
+  [Work coordinates](#work-coordinates).
 - Tap a field to edit it on the numpad. Each mode keeps its values.
 - The display and the web client show the same state.
+
+## Features
+
+- The switches X motor, Homing and Probe are on the display (Settings) and
+  on the web client (Device page, Features). A feature works when its switch
+  is on and its function has pins (see [pins.md](pins.md)).
+- A change is saved at once and applies after a reboot. Turning a feature
+  off removes its functions from the saved pin map.
+- Without the X motor, the X column stays on the display, but the X toggle
+  stays off and the X jog buttons do nothing. The modes that need X
+  (Turn, Thread, Part, Slot, Ellipse) are hidden on the display and
+  the web client. The web client hides the X settings and checks.
+- Without homing, `home` is refused. Without the probe, the Probe mode is
+  hidden (it works without the X motor, on Z only) and the probe settings and checks are hidden on the web client.
+- A G-code program that has an X word needs the X motor. A program or
+  routine with G38 needs the probe. The web client does not send it, and the
+  lathe refuses to run it. A routine can read `#<_has_x>` and `#<_has_probe>`
+  to skip those parts. The built-in zero routine skips X without the X motor.
 
 ## Axes and jog
 
 - Tap a jog button to move one step. Hold it to move continuously.
 - The step buttons set the jog step. "..." types a custom step.
-- The handwheels move the axes too.
+- The handwheels move the axes too. The travel for one handwheel turn is
+  a setting for each axis.
 - Physical jog buttons, a step cycle button and a step encoder can be
   added. See [pins.md](pins.md#jog).
 - →0 opens a choice: "Go to zero" moves the axis to 0, "Set zero" makes
@@ -57,8 +82,59 @@ How to operate ScrewSync. For connectors and flashing, see
 - Tap the spindle angle to zero it.
 - Turn an axis toggle off to de-energize its motor and crank by hand. The
   readout is dimmed and does not count the cranking.
+- At power-on, the Boot state setting sets the motors (see [Estop](#estop)).
+  The motor on/off state is not saved.
+- `power on|off [z|x]` turns the motors on or off, both without an axis.
 - A jog on an axis that a running job drives stops the job, then moves the
   axis. This applies to every mode and to the handwheels.
+
+## Estop
+
+- An estop stops all motion and turns both motors off. It does not restart
+  the controller.
+- The Boot state setting in the web client sets the state at power-on:
+  Estop, Estop off with motors off, or Estop off with motors on. After any
+  other restart (watchdog, crash, brownout, `reboot`, firmware update), the
+  machine starts in estop. An active estop input at start also keeps the
+  estop.
+- Estop icon in the header: tap it to trip the estop. In estop the display
+  shows a big estop icon: tap the screen to clear it. Then turn the motors on
+  again.
+- In estop, start, jog, the handwheels, MDI, routines and motor on are
+  refused. The serial and web commands are `estop on`, `estop off`,
+  `power on` and `power off`.
+- An estop button on an Estop input trips the estop at once. While the
+  button is active, you cannot clear the estop.
+
+## Homing
+
+- With a home switch on each axis, the home icon in the header, the `home`
+  command or the Home switch homes X, then Z. The machine must be idle and the motors on. `stop` ends it.
+- Each axis moves toward the switch, backs off, finds it again slowly and
+  pulls off. The axis position then reads its home position setting.
+- An axis is not homed after an estop, after its motor is turned off, after
+  a reboot, and after a change of screw pitch, motor steps, direction
+  invert, backlash, `maxTravelMm` or home position.
+- A home switch signal while an axis moves trips the estop. The axes stop at
+  once. When no axis moves, a signal does nothing.
+
+## Work coordinates
+
+- The display and the web client show positions in the active work
+  coordinate system. G54 is active at boot. `G10 L20 P0 Z0` sets zero in the
+  active system, `P1`–`P6` in G54–G59. The Set zero switches and the probe
+  set the active system.
+- With home switches, select G54–G59 with the selector in the header, on the
+  web MDI page, or with `G55` etc. Also before homing. The offsets are saved.
+- Without home switches, only G54 exists. Its offset is lost at reboot.
+- `G53 G0 Z… X…` moves in machine coordinates, for that line only.
+
+## Require homing
+
+- With home switches and the setting on, start, jog, routines and G-code
+  moves are refused with "not homed" until the axes are homed. Homing,
+  estop, settings and motor on or off still work, and so do G-code lines
+  that do not move.
 
 ## Running a job
 
@@ -145,7 +221,7 @@ How to operate ScrewSync. For connectors and flashing, see
 - G1 feed is per minute along the path. G33 (LatheCode: G32) is
   synchronized to the spindle; K is the lead. The feed override applies to
   G1 only.
-- `G10 L20 P1 Z… X…` makes the current position read the given values.
+- `G10 L20 P0 Z… X…` makes the current position read the given values in the active work system (`P1`–`P6`: G54–G59).
 - Motion pauses while the spindle is stopped and continues when it turns.
 - M0/M1 pause until START. M2/M30 or STOP end the program.
 - LinuxCNC programs can use NGC parameters, expressions, O-words and
@@ -167,8 +243,8 @@ How to operate ScrewSync. For connectors and flashing, see
   (LinuxCNC), e.g. `G91 G0 Z-1`.
   The modes (G90/G91, G20/G21, F) stay between lines. STOP or `stop`
   stops the move and drops the queued lines.
-- `G10 L20 P1 Z0` sets Z zero at the tool. `M100 X0` turns the X motor
-  off, `M100 X1` on. `M110` sets the spindle angle to 0.
+- `G10 L20 P0 Z0` sets Z zero at the tool. `M110` sets the spindle angle
+  to 0.
 
 ## Probe
 
@@ -183,5 +259,6 @@ How to operate ScrewSync. For connectors and flashing, see
 
 - A job also stops if you disable one of its axes, or if the display link
   is lost.
-- Each axis has a travel clamp around its power-on position
-  (`maxTravelMm`). The axis does not move past it.
+- Travel limits apply only to a homed axis. The upper limit is the home
+  position. The lower limit is `maxTravelMm` below it. The axis does not
+  move past them. Without homing, an axis has no travel limit.

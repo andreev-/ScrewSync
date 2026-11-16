@@ -23,24 +23,40 @@ txt = ""
 name = "rpm"
 type = "text"
 vscope = 1
-x = 8
+x = 256
 y = 8
-w = 208
+w = 120
 h = 56
 bco = 6570
 pco = 59262
-txt = "0 RPM"
+txt = "0"
 font = 1
 xcen = 2
 txt_maxl = 12
 
 [[component]]
+name = "rpmUnit"
+type = "text"
+vscope = 1
+x = 380
+y = 8
+w = 68
+h = 45
+bco = 6570
+pco = 59262
+txt = "RPM"
+font = 0
+xcen = 0
+ycen = 2
+txt_maxl = 4
+
+[[component]]
 name = "angle"
 type = "text"
 vscope = 1
-x = 224
+x = 452
 y = 8
-w = 168
+w = 148
 h = 56
 bco = 6570
 pco = 59262
@@ -53,9 +69,9 @@ txt_maxl = 12
 name = "mode"
 type = "button"
 vscope = 1
-x = 552
+x = 624
 y = 12
-w = 240
+w = 168
 h = 48
 style = 0
 bco = 10829
@@ -64,6 +80,33 @@ pco = 59262
 pco2 = 59262
 txt = "GEAR"
 txt_maxl = 20
+font = 6
+
+[[component]]
+name = "homeBtn"
+type = "picture"
+vscope = 1
+x = 72
+y = 12
+w = 48
+h = 48
+pic = "icons/home_none"
+
+[[component]]
+name = "wcsBtn"
+type = "button"
+vscope = 1
+x = 168
+y = 12
+w = 80
+h = 48
+style = 0
+bco = 10829
+bco2 = 15089
+pco = 59262
+pco2 = 59262
+txt = "G54"
+txt_maxl = 4
 font = 6
 
 [[component]]
@@ -1245,9 +1288,9 @@ name = "unitsLabel"
 type = "text"
 vscope = 1
 x = 320
-y = 80
+y = 76
 w = 152
-h = 48
+h = 44
 bco = 2178
 pco = 36019
 txt = "Units"
@@ -1258,9 +1301,9 @@ name = "unitMm"
 type = "button"
 vscope = 1
 x = 480
-y = 80
+y = 76
 w = 152
-h = 48
+h = 44
 style = 0
 bco = 7037
 bco2 = 12711
@@ -1273,9 +1316,9 @@ name = "unitIn"
 type = "button"
 vscope = 1
 x = 640
-y = 80
+y = 76
 w = 152
-h = 48
+h = 44
 style = 0
 bco = 8485
 bco2 = 12711
@@ -1288,9 +1331,9 @@ name = "pitchAsLabel"
 type = "text"
 vscope = 1
 x = 320
-y = 136
+y = 124
 w = 152
-h = 48
+h = 44
 bco = 2178
 pco = 36019
 txt = "Pitch as"
@@ -1301,9 +1344,9 @@ name = "pitchAsPitch"
 type = "button"
 vscope = 1
 x = 480
-y = 136
+y = 124
 w = 152
-h = 48
+h = 44
 style = 0
 bco = 7037
 bco2 = 12711
@@ -1316,9 +1359,9 @@ name = "pitchAsTpi"
 type = "button"
 vscope = 1
 x = 640
-y = 136
+y = 124
 w = 152
-h = 48
+h = 44
 style = 0
 bco = 8485
 bco2 = 12711
@@ -1331,9 +1374,9 @@ name = "netLabel"
 type = "text"
 vscope = 1
 x = 320
-y = 200
+y = 172
 w = 472
-h = 40
+h = 44
 bco = 2178
 pco = 59262
 txt = "Network"
@@ -1344,9 +1387,9 @@ name = "wifiLabel"
 type = "text"
 vscope = 1
 x = 320
-y = 248
+y = 220
 w = 152
-h = 48
+h = 44
 bco = 2178
 pco = 36019
 txt = "Wi-Fi"
@@ -1357,9 +1400,9 @@ name = "wifiOn"
 type = "button"
 vscope = 1
 x = 480
-y = 248
+y = 220
 w = 152
-h = 48
+h = 44
 style = 0
 bco = 7037
 bco2 = 12711
@@ -1372,9 +1415,9 @@ name = "wifiOff"
 type = "button"
 vscope = 1
 x = 640
-y = 248
+y = 220
 w = 152
-h = 48
+h = 44
 style = 0
 bco = 8485
 bco2 = 12711
@@ -1387,9 +1430,9 @@ name = "apLabel"
 type = "text"
 vscope = 1
 x = 320
-y = 304
+y = 268
 w = 152
-h = 48
+h = 44
 bco = 2178
 pco = 36019
 txt = "Force AP"
@@ -1400,9 +1443,9 @@ name = "apOn"
 type = "button"
 vscope = 1
 x = 480
-y = 304
+y = 268
 w = 152
-h = 48
+h = 44
 style = 0
 bco = 8485
 bco2 = 12711
@@ -1415,9 +1458,9 @@ name = "apOff"
 type = "button"
 vscope = 1
 x = 640
-y = 304
+y = 268
 w = 152
-h = 48
+h = 44
 style = 0
 bco = 7037
 bco2 = 12711
@@ -1430,9 +1473,9 @@ name = "stateLabel"
 type = "text"
 vscope = 1
 x = 320
-y = 360
+y = 316
 w = 152
-h = 48
+h = 44
 bco = 2178
 pco = 36019
 txt = "Status"
@@ -1443,9 +1486,9 @@ name = "wifiState"
 type = "text"
 vscope = 1
 x = 480
-y = 360
+y = 316
 w = 312
-h = 48
+h = 44
 bco = 2178
 pco = 59262
 txt = "connected"
@@ -1457,9 +1500,9 @@ name = "ipLabel"
 type = "text"
 vscope = 1
 x = 320
-y = 416
+y = 364
 w = 152
-h = 48
+h = 44
 bco = 2178
 pco = 36019
 txt = "IP"
@@ -1470,14 +1513,72 @@ name = "wifiIp"
 type = "text"
 vscope = 1
 x = 480
-y = 416
+y = 364
 w = 312
-h = 48
+h = 44
 bco = 2178
 pco = 59262
 txt = "192.168.1.50"
 xcen = 0
 txt_maxl = 40
+
+[[component]]
+name = "featLabel"
+type = "text"
+vscope = 1
+x = 320
+y = 412
+w = 152
+h = 44
+bco = 2178
+pco = 36019
+txt = "Features"
+xcen = 0
+
+[[component]]
+name = "featX"
+type = "button"
+vscope = 1
+x = 480
+y = 412
+w = 100
+h = 44
+style = 0
+bco = 8485
+bco2 = 12711
+pco = 59262
+pco2 = 59262
+txt = "X motor"
+
+[[component]]
+name = "featHome"
+type = "button"
+vscope = 1
+x = 586
+y = 412
+w = 100
+h = 44
+style = 0
+bco = 8485
+bco2 = 12711
+pco = 59262
+pco2 = 59262
+txt = "Homing"
+
+[[component]]
+name = "featProbe"
+type = "button"
+vscope = 1
+x = 692
+y = 412
+w = 100
+h = 44
+style = 0
+bco = 8485
+bco2 = 12711
+pco = 59262
+pco2 = 59262
+txt = "Probe"
 
 [[component]]
 name = "menuBg"
@@ -2070,6 +2171,193 @@ font = 6
 txt_maxl = 12
 
 [[component]]
+name = "wcsDismiss"
+type = "hotspot"
+x = 0
+y = 0
+w = 800
+h = 480
+
+[[component]]
+name = "wcsBg"
+type = "text"
+vscope = 1
+x = 0
+y = 72
+w = 312
+h = 408
+bco = 2178
+pco = 59262
+txt = ""
+
+[[component]]
+name = "wcs0"
+type = "button"
+vscope = 1
+x = 8
+y = 80
+w = 144
+h = 92
+style = 0
+bco = 8485
+bco2 = 12711
+pco = 59262
+pco2 = 59262
+txt = "G54"
+txt_maxl = 4
+font = 6
+
+[[component]]
+name = "wcs1"
+type = "button"
+vscope = 1
+x = 160
+y = 80
+w = 144
+h = 92
+style = 0
+bco = 8485
+bco2 = 12711
+pco = 59262
+pco2 = 59262
+txt = "G55"
+txt_maxl = 4
+font = 6
+
+[[component]]
+name = "wcs2"
+type = "button"
+vscope = 1
+x = 8
+y = 180
+w = 144
+h = 92
+style = 0
+bco = 8485
+bco2 = 12711
+pco = 59262
+pco2 = 59262
+txt = "G56"
+txt_maxl = 4
+font = 6
+
+[[component]]
+name = "wcs3"
+type = "button"
+vscope = 1
+x = 160
+y = 180
+w = 144
+h = 92
+style = 0
+bco = 8485
+bco2 = 12711
+pco = 59262
+pco2 = 59262
+txt = "G57"
+txt_maxl = 4
+font = 6
+
+[[component]]
+name = "wcs4"
+type = "button"
+vscope = 1
+x = 8
+y = 280
+w = 144
+h = 92
+style = 0
+bco = 8485
+bco2 = 12711
+pco = 59262
+pco2 = 59262
+txt = "G58"
+txt_maxl = 4
+font = 6
+
+[[component]]
+name = "wcs5"
+type = "button"
+vscope = 1
+x = 160
+y = 280
+w = 144
+h = 92
+style = 0
+bco = 8485
+bco2 = 12711
+pco = 59262
+pco2 = 59262
+txt = "G59"
+txt_maxl = 4
+font = 6
+
+[[component]]
+name = "estopBtn"
+type = "picture"
+vscope = 1
+x = 8
+y = 12
+w = 48
+h = 48
+pic = "icons/estop_ok"
+
+[[component]]
+name = "estopShade"
+type = "text"
+vscope = 1
+x = 0
+y = 0
+w = 800
+h = 480
+bco = 2178
+pco = 65535
+txt = ""
+
+[[component]]
+name = "estopImg"
+type = "picture"
+vscope = 1
+x = 260
+y = 60
+w = 280
+h = 280
+pic = "icons/estop_big"
+
+[[component]]
+name = "estopMsg"
+type = "text"
+vscope = 1
+x = 0
+y = 380
+w = 800
+h = 88
+bco = 2178
+pco = 65535
+txt = "Tap to disarm estop"
+font = 2
+xcen = 1
+ycen = 2
+isbr = 1
+txt_maxl = 60
+
+[[component]]
+name = "estopTouch"
+type = "hotspot"
+x = 0
+y = 0
+w = 800
+h = 480
+
+[[component]]
+name = "estopSync"
+type = "hotspot"
+x = 790
+y = 478
+w = 2
+h = 2
+
+[[component]]
 name = "toastShade"
 type = "text"
 vscope = 1
@@ -2212,32 +2500,12 @@ txt = ""
 txt_maxl = 8
 
 [[component]]
-name = "jogTicks"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "menuOpen"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "settingsOpen"
-type = "variable"
-vscope = 1
-
-[[component]]
 name = "modeName"
 type = "variable"
 vscope = 1
 sta = 1
 txt = ""
 txt_maxl = 20
-
-[[component]]
-name = "kpDotUsed"
-type = "variable"
-vscope = 1
 
 [[component]]
 name = "kpLen"
@@ -2253,22 +2521,12 @@ txt = ""
 txt_maxl = 1
 
 [[component]]
-name = "kpTarget"
-type = "variable"
-vscope = 1
-
-[[component]]
 name = "kpDigits"
 type = "variable"
 vscope = 1
 sta = 1
 txt = ""
 txt_maxl = 8
-
-[[component]]
-name = "kpNeg"
-type = "variable"
-vscope = 1
 
 [[component]]
 name = "kpNum"
@@ -2407,22 +2665,12 @@ txt = ""
 txt_maxl = 48
 
 [[component]]
-name = "cKind10"
-type = "variable"
-vscope = 1
-
-[[component]]
 name = "cCmd10"
 type = "variable"
 vscope = 1
 sta = 1
 txt = ""
 txt_maxl = 48
-
-[[component]]
-name = "cKind11"
-type = "variable"
-vscope = 1
 
 [[component]]
 name = "cCmd11"
@@ -2433,22 +2681,12 @@ txt = ""
 txt_maxl = 48
 
 [[component]]
-name = "cKind12"
-type = "variable"
-vscope = 1
-
-[[component]]
 name = "cCmd12"
 type = "variable"
 vscope = 1
 sta = 1
 txt = ""
 txt_maxl = 48
-
-[[component]]
-name = "cKind13"
-type = "variable"
-vscope = 1
 
 [[component]]
 name = "cCmd13"
@@ -2459,11 +2697,6 @@ txt = ""
 txt_maxl = 48
 
 [[component]]
-name = "cKind14"
-type = "variable"
-vscope = 1
-
-[[component]]
 name = "cCmd14"
 type = "variable"
 vscope = 1
@@ -2472,67 +2705,12 @@ txt = ""
 txt_maxl = 48
 
 [[component]]
-name = "cKind15"
-type = "variable"
-vscope = 1
-
-[[component]]
 name = "cCmd15"
 type = "variable"
 vscope = 1
 sta = 1
 txt = ""
 txt_maxl = 48
-
-[[component]]
-name = "cKind0"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "cKind1"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "cKind2"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "cKind3"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "cKind4"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "cKind5"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "cKind6"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "cKind7"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "cKind8"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "cKind9"
-type = "variable"
-vscope = 1
 
 [[component]]
 name = "menuCmd0"
@@ -2658,41 +2836,9 @@ txt = ""
 txt_maxl = 48
 
 [[component]]
-name = "kpKind"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "kpRightOpen"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "kpOpen"
-type = "variable"
-vscope = 1
-
-[[component]]
 name = "needZero"
 type = "variable"
 vscope = 1
-
-[[component]]
-name = "zeroFor"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "menuSel"
-type = "variable"
-vscope = 1
-val = -1
-
-[[component]]
-name = "kpField"
-type = "variable"
-vscope = 1
-val = -1
 
 [[component]]
 name = "choice"
@@ -2704,16 +2850,6 @@ txt_maxl = 48
 
 [[component]]
 name = "ready"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "kpSignOn"
-type = "variable"
-vscope = 1
-
-[[component]]
-name = "kpDotOn"
 type = "variable"
 vscope = 1
 
@@ -2748,6 +2884,13 @@ vscope = 1
 val = 1
 
 [[component]]
+name = "homeState"
+type = "variable"
+vscope = 1
+val = 3
+
+[[component]]
 name = "estop"
 type = "variable"
 vscope = 1
+val = 1

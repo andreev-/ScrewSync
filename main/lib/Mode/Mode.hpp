@@ -64,11 +64,12 @@ namespace Mode
     void begin();
 
     const char *name(Id id);
+    const char *unavailable(Id id);
     bool parse(const char *name, Id &out);
 
     Id current();
     bool running();
-    // A mode runs or MDI moves.
+    // A mode runs, MDI moves or homing runs.
     bool busy();
     bool owns(Stepper::Axis axis);
 

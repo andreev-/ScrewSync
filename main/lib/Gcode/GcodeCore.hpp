@@ -51,8 +51,8 @@ namespace Gcode
         Pause,
         OptionalPause,
         End,
-        SetPosition,  // G10 L20: the axes in mask read zDu/xDu
-        Motors,       // M100: the axes in mask on (1) or off (0) in zDu/xDu
+        SetPosition,  // G10 L20: the axes in mask read zDu/xDu in system wcs
+        SelectWcs,
         SpindleAngle, // M110: the current angle becomes feed millidegrees
         Probe,        // G38.x: one axis toward zDu/xDu at feed, see the probe flags
     };
@@ -62,6 +62,14 @@ namespace Gcode
 
     constexpr uint8_t AXIS_Z = 1;
     constexpr uint8_t AXIS_X = 2;
+
+    constexpr size_t WCS_COUNT = 6;
+
+    struct WcsState
+    {
+        uint8_t active;
+        int32_t offsetDu[WCS_COUNT][2];
+    };
 
     // One interpreted motion/control action. For the motion kinds zDu/xDu
     // are absolute targets.
@@ -74,6 +82,7 @@ namespace Gcode
         uint32_t line;
         uint8_t axes;
         uint8_t probe;
+        uint8_t wcs;
     };
 
     struct StepSink

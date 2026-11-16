@@ -125,6 +125,14 @@ ZTEST(settings_fields, test_handwheel_lag)
     zassert_equal(g_conf.x.handwheelLagMs, 250);
 }
 
+ZTEST(settings_fields, test_handwheel_travel)
+{
+    zassert_true(set("handwheelTravelDuZ", "30000"));
+    zassert_equal(g_conf.z.handwheelTravelDu, 30000);
+    zassert_false(set("handwheelTravelDuZ", "0"));
+    zassert_equal(g_conf.z.handwheelTravelDu, 30000);
+}
+
 ZTEST(settings_fields, test_axis_fields_reach_their_axis)
 {
     Conf defaults;
@@ -176,13 +184,16 @@ ZTEST(settings_fields, test_format_all_into_a_short_buffer)
     zassert_true(strlen(out) < sizeof(out));
 }
 
-ZTEST(settings_fields, test_old_name_finds_the_renamed_field)
+ZTEST(settings_fields, test_old_names_of_a_field)
 {
-    const Field *f = findField("speedManualMoveX");
-    zassert_not_null(f);
-    zassert_str_equal(f->name, "speedRapidX");
-    zassert_str_equal(oldName(*f), "speedManualMoveX");
-    zassert_is_null(oldName(*findField("encoderPpr")));
+    const Field &rapid = *findField("speedRapidDuPerMinX");
+    zassert_str_equal(oldName(rapid, 0), "speedRapidX");
+    zassert_str_equal(oldName(rapid, 1), "speedManualMoveX");
+    zassert_is_null(oldName(rapid, 2));
+    zassert_str_equal(oldName(*findField("decelerationDuPerSec2Z"), 0), "decelerationZ");
+    zassert_is_null(oldName(*findField("encoderPpr"), 0));
+    zassert_is_null(findField("speedManualMoveX"));
+    zassert_is_null(findField("speedRapidZ"));
 }
 
 namespace
@@ -200,19 +211,112 @@ namespace
     }
 }
 
-ZTEST(settings_fields, test_json_old_name)
+ZTEST(settings_fields, test_convert_legacy)
 {
-    int64_t mask = parse("{\"speedManualMoveX\":1234}");
-    zassert_equal(g_conf.x.speedRapid, 1234);
-    zassert_equal(mask, (int64_t)BIT64(indexOf("speedRapidX")));
+    g_conf.z.motorSteps = 1600;
+    g_conf.z.screwPitchDu = 20000;
+    g_conf.z.speedRapidDuPerMin = 12800;
+    convertLegacy(*findField("speedRapidDuPerMinZ"), g_conf);
+    zassert_equal(g_conf.z.speedRapidDuPerMin, 9600000);
+    g_conf.z.accelerationDuPerSec2 = 10000;
+    convertLegacy(*findField("accelerationDuPerSec2Z"), g_conf);
+    zassert_equal(g_conf.z.accelerationDuPerSec2, 125000);
+}
+
+ZTEST(settings_fields, test_convert_legacy_uses_the_axis_of_the_field)
+{
+    g_conf.x.motorSteps = 800;
+    g_conf.x.screwPitchDu = 10000;
+    g_conf.x.speedStartDuPerMin = 100;
+    convertLegacy(*findField("speedStartDuPerMinX"), g_conf);
+    zassert_equal(g_conf.x.speedStartDuPerMin, 75000);
+}
+
+ZTEST(settings_fields, test_convert_legacy_stays_in_range)
+{
+    g_conf.z.motorSteps = 1;
+    g_conf.z.screwPitchDu = 10000000;
+    g_conf.z.speedRapidDuPerMin = 1000000;
+    convertLegacy(*findField("speedRapidDuPerMinZ"), g_conf);
+    zassert_equal(g_conf.z.speedRapidDuPerMin, (int32_t)findField("speedRapidDuPerMinZ")->max);
+    g_conf.z.motorSteps = 1000000;
+    g_conf.z.screwPitchDu = 1;
+    g_conf.z.accelerationDuPerSec2 = 1;
+    convertLegacy(*findField("accelerationDuPerSec2Z"), g_conf);
+    zassert_equal(g_conf.z.accelerationDuPerSec2, 1);
+}
+
+ZTEST(settings_fields, test_derive_steps)
+{
+    deriveSteps(g_conf);
+    zassert_equal(g_conf.z.speedStartSteps, 667);
+    zassert_equal(g_conf.z.speedRapidSteps, 13333);
+    zassert_equal(g_conf.x.speedRapidSteps, 6667);
+    zassert_equal(g_conf.z.accelerationSteps, 8000);
+    zassert_equal(g_conf.z.decelerationSteps, 20000);
+}
+
+ZTEST(settings_fields, test_derive_steps_follows_the_axis_values)
+{
+    g_conf.x.motorSteps = 3200;
+    deriveSteps(g_conf);
+    zassert_equal(g_conf.x.speedRapidSteps, 13333);
+    zassert_equal(g_conf.z.speedRapidSteps, 13333);
+    g_conf.x.speedStartDuPerMin = 1;
+    g_conf.x.accelerationDuPerSec2 = 1;
+    deriveSteps(g_conf);
+    zassert_equal(g_conf.x.speedStartSteps, 1);
+    zassert_equal(g_conf.x.accelerationSteps, 1);
+}
+
+ZTEST(settings_fields, test_json_old_name_is_converted)
+{
+    int64_t mask = parse("{\"speedManualMoveX\":6400,\"accelerationX\":10000}");
+    zassert_equal(g_conf.x.speedRapidDuPerMin, 4800000);
+    zassert_equal(g_conf.x.accelerationDuPerSec2, 125000);
+    zassert_equal(mask, (int64_t)(BIT64(indexOf("speedRapidDuPerMinX")) | BIT64(indexOf("accelerationDuPerSec2X"))));
+}
+
+ZTEST(settings_fields, test_json_old_names_of_every_speed_field)
+{
+    parse("{\"speedStartZ\":800,\"speedRapidZ\":12800,\"accelerationZ\":10000,\"decelerationZ\":20000}");
+    zassert_equal(g_conf.z.speedStartDuPerMin, 600000);
+    zassert_equal(g_conf.z.speedRapidDuPerMin, 9600000);
+    zassert_equal(g_conf.z.accelerationDuPerSec2, 125000);
+    zassert_equal(g_conf.z.decelerationDuPerSec2, 250000);
+}
+
+ZTEST(settings_fields, test_json_old_name_uses_the_axis_values_of_the_file)
+{
+    parse("{\"motorStepsZ\":800,\"screwPitchDuZ\":10000,\"speedRapidZ\":1000}");
+    zassert_equal(g_conf.z.speedRapidDuPerMin, 750000);
+    parse("{\"speedRapidZ\":1000,\"motorStepsZ\":3200,\"screwPitchDuZ\":10000}");
+    zassert_equal(g_conf.z.speedRapidDuPerMin, 187500);
+}
+
+ZTEST(settings_fields, test_json_old_name_uses_the_active_axis_values_without_them)
+{
+    g_conf.x.motorSteps = 800;
+    g_conf.x.screwPitchDu = 10000;
+    parse("{\"speedRapidX\":1000}");
+    zassert_equal(g_conf.x.speedRapidDuPerMin, 750000);
 }
 
 ZTEST(settings_fields, test_json_new_name_wins)
 {
-    parse("{\"speedRapidZ\":111,\"speedManualMoveZ\":222}");
-    zassert_equal(g_conf.z.speedRapid, 111);
-    parse("{\"speedManualMoveZ\":333,\"speedRapidZ\":444}");
-    zassert_equal(g_conf.z.speedRapid, 444);
+    int64_t mask = parse("{\"speedRapidDuPerMinZ\":111,\"speedManualMoveZ\":222}");
+    zassert_equal(g_conf.z.speedRapidDuPerMin, 111);
+    zassert_equal(mask, (int64_t)BIT64(indexOf("speedRapidDuPerMinZ")));
+    parse("{\"speedManualMoveZ\":333,\"speedRapidDuPerMinZ\":444}");
+    zassert_equal(g_conf.z.speedRapidDuPerMin, 444);
+}
+
+ZTEST(settings_fields, test_json_newer_old_name_wins)
+{
+    parse("{\"speedRapidZ\":1000,\"speedManualMoveZ\":2000}");
+    zassert_equal(g_conf.z.speedRapidDuPerMin, 750000);
+    parse("{\"speedManualMoveX\":2000,\"speedRapidX\":1000}");
+    zassert_equal(g_conf.x.speedRapidDuPerMin, 750000);
 }
 
 ZTEST(settings_fields, test_json_mask_past_bit_31)
@@ -224,7 +328,7 @@ ZTEST(settings_fields, test_json_mask_past_bit_31)
 
 ZTEST(settings_fields, test_json_invalid)
 {
-    zassert_true(parse("{\"speedRapidZ\":") < 0);
+    zassert_true(parse("{\"speedRapidDuPerMinZ\":") < 0);
 }
 
 ZTEST(settings_fields, test_param_names)
@@ -233,6 +337,12 @@ ZTEST(settings_fields, test_param_names)
     bool length;
     zassert_true(paramName(*findField("probeFeedDuPerMin"), name, sizeof(name), length));
     zassert_str_equal(name, "_probe_feed");
+    zassert_true(length);
+    zassert_true(paramName(*findField("speedRapidDuPerMinX"), name, sizeof(name), length));
+    zassert_str_equal(name, "_speed_rapid_x");
+    zassert_true(length);
+    zassert_true(paramName(*findField("accelerationDuPerSec2Z"), name, sizeof(name), length));
+    zassert_str_equal(name, "_acceleration_z");
     zassert_true(length);
     zassert_true(paramName(*findField("backlashDuZ"), name, sizeof(name), length));
     zassert_str_equal(name, "_backlash_z");
@@ -248,4 +358,34 @@ ZTEST(settings_fields, test_param_names)
     zassert_true(length);
     zassert_true(paramValue("_invert_encoder", g_conf, v, length));
     zassert_false(paramValue("_nope", g_conf, v, length));
+}
+
+ZTEST(settings_fields, test_home_fields)
+{
+    zassert_true(set("homeFastDuPerMinZ", "100000"));
+    zassert_equal(g_conf.z.homeFastDuPerMin, 100000);
+    zassert_true(set("homeSlowDuPerMinX", "20000"));
+    zassert_equal(g_conf.x.homeSlowDuPerMin, 20000);
+    zassert_true(set("homeLatchBackOffDuZ", "15000"));
+    zassert_equal(g_conf.z.homeLatchBackOffDu, 15000);
+    zassert_false(set("homeLatchBackOffDuX", "9999"));
+    zassert_true(set("homePullOffDuX", "2000"));
+    zassert_equal(g_conf.x.homePullOffDu, 2000);
+    zassert_true(set("homePositionDuZ", "-1000"));
+    zassert_equal(g_conf.z.homePositionDu, -1000);
+    zassert_true(set("requireHoming", "true"));
+    zassert_true(g_conf.requireHoming);
+    zassert_false(set("homeFastDuPerMinZ", "-1"));
+}
+
+ZTEST(settings_fields, test_boot_state)
+{
+    zassert_equal(g_conf.bootState, 0);
+    for (const char *v : {"0", "1", "2"}) {
+        zassert_true(set("bootState", v));
+    }
+    zassert_equal(g_conf.bootState, 2);
+    zassert_false(set("bootState", "3"));
+    zassert_false(set("bootState", "-1"));
+    zassert_equal(g_conf.bootState, 2);
 }
