@@ -45,6 +45,8 @@ namespace Display::Detail
 
     bool pushCellType(size_t slot, Theme::CellType type);
 
+    bool keypadOpen();
+
     bool pinsOpen();
     void setPinsOpen(bool open);
     bool pushPins();
@@ -53,6 +55,8 @@ namespace Display::Detail
     void pushMenu(Mode::Id current);
     // Returns whether any cell's type changed.
     bool pushPanel(Mode::Id id, const char *params);
+
+    void armRunView(bool armed);
 
     void setPanelPage(size_t page);
     size_t panelPage();
