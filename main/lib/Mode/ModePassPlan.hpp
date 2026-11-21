@@ -25,16 +25,31 @@
 // Each level runs once per start.
 namespace Mode::Detail
 {
+    enum class DepthProfile : uint8_t
+    {
+        Linear,
+        Squared,
+        Sandvik,
+    };
+
+    enum class FlankInfeed : uint8_t
+    {
+        Off,
+        Alternating,
+        OneSide,
+    };
+
     struct PassPlan
     {
         int32_t levels;
         int32_t finishLevels;
         int32_t starts;
-        bool squaredDepth; // deeper first passes
+        DepthProfile depthProfile;
         double depthDu;
         double lengthDu;
         double endReductionDu; // shortens each successive level
-        double flankTan;       // alternating flank infeed: main shift per depth, 0 = radial
+        FlankInfeed flank;
+        double flankTan; // main shift per depth
     };
 
     struct PassCursor
@@ -48,7 +63,8 @@ namespace Mode::Detail
     double passDepthFraction(const PassPlan &plan, int32_t level);
     double passDepthDu(const PassPlan &plan, int32_t level);
     // Main-axis shift of a level's start, in the cut direction: each level
-    // slides along the flank the previous one cut, alternating sides.
+    // slides along the flank the previous one cut, alternating sides or
+    // always ahead in the cut direction.
     double passFlankOffsetDu(const PassPlan &plan, int32_t level);
     double passLengthDu(const PassPlan &plan, int32_t level);
 
