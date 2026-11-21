@@ -21,7 +21,8 @@
 #include <stdint.h>
 
 // Depth levels and starts of a multi-pass job. Level 0 = not started,
-// levels 1..levels step deeper, later ones are finish passes at full depth.
+// levels 1..levels step deeper to the depth less finishDu, later ones are
+// finish passes at full depth.
 // Each level runs once per start.
 namespace Mode::Detail
 {
@@ -46,6 +47,7 @@ namespace Mode::Detail
         int32_t starts;
         DepthProfile depthProfile;
         double depthDu;
+        double finishDu;
         double lengthDu;
         double endReductionDu; // shortens each successive level
         FlankInfeed flank;
@@ -73,6 +75,8 @@ namespace Mode::Detail
     // After a pass: next start, else next depth level. False when done.
     bool passAdvance(const PassPlan &plan, PassCursor &cursor);
     void passSkipLevel(const PassPlan &plan, PassCursor &cursor);
+
+    bool passUsesFinishFeed(bool hasFinishFeed, int32_t level, int32_t levels);
 
     int32_t passCount(const PassPlan &plan);
     // 1-based, 0 before the first pass.

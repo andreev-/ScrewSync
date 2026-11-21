@@ -16,6 +16,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 #include "DisplayInternal.hpp"
+#include "PanelPage.hpp"
 #include "Settings.hpp"
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,8 @@ using ModeCells::Kind;
 
 namespace
 {
+    PanelPage g_panelPage;
+
     static_assert(Mode::COUNT <= MENU_SLOTS, "mode menu too small");
 
     CellType valueType(Kind kind)
@@ -45,23 +48,25 @@ namespace
         }
     }
 
-    bool pushLatchCell(size_t slot, const char *text, bool on, const char *mode, const char *param, const char *next)
+    bool pushLatchCell(size_t slot, const char *text, int color, const char *command)
     {
         char key[KEY_MAX];
         snprintf(key, sizeof(key), "c%u.txt", (unsigned)slot);
         pushText(key, "%s", text);
         snprintf(key, sizeof(key), "c%u", (unsigned)slot);
-        pushSelected(key, on);
-        pushColor(key, "borderc", on ? COLOR_SELECTED : COLOR_BUTTON);
+        pushColor(key, "bco", color);
+        pushColor(key, "borderc", color);
         snprintf(key, sizeof(key), "cCmd%u.txt", (unsigned)slot);
-        pushText(key, "%s %s %s", mode, param, next);
+        pushText(key, "%s", command);
         return pushCellType(slot, CellType::Latch);
     }
 
     bool pushLatch(size_t slot, const char *mode, const Cell &c, const char *raw)
     {
         bool on = !strcmp(raw, "on");
-        return pushLatchCell(slot, c.label, on, mode, c.param, on ? "off" : "on");
+        char command[48];
+        snprintf(command, sizeof(command), "%s %s %s", mode, c.param, on ? "off" : "on");
+        return pushLatchCell(slot, c.label, on ? COLOR_SELECTED : COLOR_BUTTON, command);
     }
 
     bool pushCycle(size_t slot, const char *mode, const Cell &c, const char *raw)
@@ -75,7 +80,9 @@ namespace
         listItem(c.labelA, index, shown, sizeof(shown));
         char text[32];
         snprintf(text, sizeof(text), "%s: %s", c.label, shown);
-        return pushLatchCell(slot, text, index != 0, mode, c.param, next);
+        char command[48];
+        snprintf(command, sizeof(command), "%s %s %s", mode, c.param, next);
+        return pushLatchCell(slot, text, index != 0 ? COLOR_SELECTED : COLOR_BUTTON, command);
     }
 
     bool pushValue(size_t slot, Mode::Id id, const Cell &c, const char *raw)
@@ -124,6 +131,9 @@ namespace
 
     bool pushCell(size_t slot, Mode::Id id, const Cell &c, const char *params)
     {
+        if (c.kind == Kind::Button) {
+            return pushLatchCell(slot, c.label, COLOR_SETTINGS, c.valueA);
+        }
         if (c.kind == Kind::Picker) {
             if (slot != PICKER_SLOT || !cellShown(c, params)) {
                 return pushCellType(slot, CellType::Hidden);
@@ -151,6 +161,18 @@ namespace
 
 namespace Display::Detail
 {
+    void setPanelPage(size_t page)
+    {
+        Mode::Id id = Mode::current();
+        g_panelPage.select(id, ModeCells::pages(id), page);
+        pushSoon();
+    }
+
+    size_t panelPage()
+    {
+        return g_panelPage.shown(Mode::current());
+    }
+
     bool pushCellType(size_t slot, CellType type)
     {
         char key[KEY_MAX];
@@ -167,7 +189,8 @@ namespace Display::Detail
             params = probeParams;
         }
         size_t count;
-        const Cell *cells = ModeCells::cells(id, count);
+        g_panelPage.enter(id);
+        const Cell *cells = ModeCells::cells(id, g_panelPage.page, count);
         bool changed = false;
         for (size_t slot = 0; slot < ModeCells::MAX; slot++) {
             if (slot < count) {
